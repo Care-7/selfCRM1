@@ -177,3 +177,30 @@ test('VeriFactu hash and sequential invoice numbering work deterministically', (
   );
   assert.equal(series.length, 6);
 });
+
+test('Proforma and Albarán series numbering and document division work accurately', () => {
+  const nextPro = getNextInvoiceNumber(INITIAL_ISSUED_INVOICES, 'Contabilidad Comunidades', 'proforma');
+  assert.equal(nextPro.series, 'PRO');
+  assert.equal(nextPro.number, 'PRO-2026-0003');
+
+  const nextAlb = getNextInvoiceNumber(INITIAL_ISSUED_INVOICES, 'Actividad Artística', 'albaran');
+  assert.equal(nextAlb.series, 'ALB');
+  assert.equal(nextAlb.number, 'ALB-2026-0003');
+
+  const proformas = INITIAL_ISSUED_INVOICES.filter((inv) => inv.documentType === 'proforma');
+  const albaranes = INITIAL_ISSUED_INVOICES.filter((inv) => inv.documentType === 'albaran');
+  const normales = INITIAL_ISSUED_INVOICES.filter((inv) => inv.documentType === 'normal');
+
+  assert.equal(proformas.length, 2);
+  assert.equal(albaranes.length, 2);
+  assert.equal(normales.length, 15);
+
+  // Proformas distributed across activities
+  assert.ok(proformas.some((p) => p.activity === 'Contabilidad Comunidades'));
+  assert.ok(proformas.some((p) => p.activity === 'Actividad Artística'));
+
+  // Albaranes distributed across activities and valued flag
+  assert.ok(albaranes.some((a) => a.activity === 'Contabilidad Comunidades' && a.isValued === true));
+  assert.ok(albaranes.some((a) => a.activity === 'Actividad Artística' && a.isValued === false));
+});
+

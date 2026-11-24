@@ -7,10 +7,13 @@ import {
   ShieldCheck,
   FileEdit,
   CheckCircle2,
+  Clock,
+  FileText,
 } from 'lucide-react';
 import type {
   ActivityType,
   Contact,
+  DocumentType,
   InvoiceLine,
   IrpfRate,
   IssuedInvoice,
@@ -25,6 +28,7 @@ import {
 import { REFERENCE_DATE } from '../data/mockData';
 import { VeriFactuQr } from './VeriFactuQr';
 import { StatusBadge } from './StatusBadge';
+import { SegmentedControl } from './SegmentedControl';
 
 interface InvoiceEditorModalProps {
   isOpen: boolean;
@@ -35,7 +39,14 @@ interface InvoiceEditorModalProps {
   onClose: () => void;
   onSaveInvoice: (invoice: IssuedInvoice, isNew: boolean) => void;
   onMarkPaid: (invoiceId: string) => void;
+  onConvertToInvoice?: (doc: IssuedInvoice) => void;
 }
+
+const DOC_TYPE_OPTIONS: { value: DocumentType; label: string }[] = [
+  { value: 'normal', label: 'Factura Normal' },
+  { value: 'proforma', label: 'Proforma' },
+  { value: 'albaran', label: 'Albarán' },
+];
 
 export function InvoiceEditorModal({
   isOpen,
@@ -46,10 +57,13 @@ export function InvoiceEditorModal({
   onClose,
   onSaveInvoice,
   onMarkPaid,
+  onConvertToInvoice,
 }: InvoiceEditorModalProps) {
   const isLocked = Boolean(invoice?.veriFactuLocked);
   const isNew = !invoice;
 
+  const [documentType, setDocumentType] = useState<DocumentType>('normal');
+  const [isValued, setIsValued] = useState<boolean>(true);
   const [clientId, setClientId] = useState('');
   const [activity, setActivity] = useState<ActivityType>(defaultActivity);
   const [issueDate, setIssueDate] = useState(REFERENCE_DATE);
@@ -64,6 +78,8 @@ export function InvoiceEditorModal({
     setErrorMsg('');
 
     if (invoice) {
+      setDocumentType(invoice.documentType ?? 'normal');
+      setIsValued(invoice.isValued !== false);
       setClientId(invoice.clientId);
       setActivity(invoice.activity);
       setIssueDate(invoice.issueDate);
@@ -72,6 +88,8 @@ export function InvoiceEditorModal({
       setIrpfRate(invoice.irpfRate);
       setLines(invoice.lines.map((l) => ({ ...l })));
     } else {
+      setDocumentType('normal');
+      setIsValued(true);
       const initialClient =
         clients.find((c) => c.activity === defaultActivity && c.status === 'Activo') ??
         clients[0];
@@ -108,8 +126,8 @@ export function InvoiceEditorModal({
     if (invoice) {
       return { series: invoice.series, number: invoice.number };
     }
-    return getNextInvoiceNumber(allIssuedInvoices, activity);
-  }, [invoice, allIssuedInvoices, activity]);
+    return getNextInvoiceNumber(allIssuedInvoices, activity, documentType);
+  }, [invoice, allIssuedInvoices, activity, documentType]);
 
   const totals = useMemo(
     () => calculateInvoiceTotals(lines, ivaRate, irpfRate),
@@ -150,7 +168,7 @@ export function InvoiceEditorModal({
 
   const validateAndBuild = (emitVeriFactu: boolean): IssuedInvoice | null => {
     if (!selectedClient) {
-      setErrorMsg('Selecciona un cliente antes de guardar la factura.');
+      setErrorMsg('Selecciona un cliente antes de guardar el documento.');
       return null;
     }
     const cleanLines = lines.filter((l) => l.description.trim().length > 0);
@@ -158,12 +176,13 @@ export function InvoiceEditorModal({
       setErrorMsg('Añade al menos una línea de concepto con descripción.');
       return null;
     }
-    if (totals.baseImponible <= 0) {
+    if (documentType !== 'albaran' && totals.baseImponible <= 0) {
       setErrorMsg('El importe de la base imponible debe ser superior a 0 €.');
       return null;
     }
 
-    const hash = emitVeriFactu
+    const shouldLock = emitVeriFactu && documentType === 'normal';
+    const hash = shouldLock
       ? generateVeriFactuHash(
           invoiceNumberInfo.number,
           selectedClient.nif,
@@ -176,6 +195,8 @@ export function InvoiceEditorModal({
       id: invoice ? invoice.id : `inv-${Date.now()}`,
       number: invoiceNumberInfo.number,
       series: invoiceNumberInfo.series,
+      documentType,
+      isValued: documentType === 'albaran' ? isValued : undefined,
       clientId: selectedClient.id,
       clientName: selectedClient.name,
       clientNif: selectedClient.nif,
@@ -185,10 +206,16 @@ export function InvoiceEditorModal({
       lines: cleanLines,
       ivaRate,
       irpfRate,
-      status: emitVeriFactu ? 'Pendiente' : 'Borrador',
-      veriFactuLocked: emitVeriFactu,
+      status: shouldLock
+        ? 'Pendiente'
+        : invoice
+        ? invoice.status
+        : documentType === 'normal'
+        ? 'Borrador'
+        : 'Pendiente',
+      veriFactuLocked: shouldLock,
       veriFactuHash: hash,
-      veriFactuTimestamp: emitVeriFactu ? new Date().toISOString() : undefined,
+      veriFactuTimestamp: shouldLock ? new Date().toISOString() : undefined,
     };
   };
 
@@ -227,42 +254,142 @@ export function InvoiceEditorModal({
               id="invoice-editor-title"
               className="text-[18px] font-semibold tracking-[-0.02em] text-[#1D1D1F] truncate"
             >
-              {isNew ? 'Nueva factura emitida' : `Factura ${invoice.number}`}
+              {isNew ? (
+                documentType === 'normal'
+                  ? 'Nueva Factura emitida'
+                  : documentType === 'proforma'
+                  ? 'Nueva Factura Proforma'
+                  : 'Nuevo Albarán'
+              ) : (
+                `${invoice.documentType === 'proforma' ? 'Proforma' : invoice.documentType === 'albaran' ? 'Albarán' : 'Factura'} ${invoice.number}`
+              )}
             </h2>
+
             {invoice && (
-              <StatusBadge
-                label={invoice.status}
-                tone={
-                  invoice.status === 'Cobrada'
-                    ? 'success'
-                    : invoice.status === 'Pendiente'
-                    ? 'warning'
-                    : 'neutral'
-                }
-                icon={
-                  invoice.status === 'Cobrada'
-                    ? 'check'
-                    : invoice.status === 'Pendiente'
-                    ? 'clock'
-                    : 'draft'
-                }
-              />
+              invoice.documentType === 'proforma' ? (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-lg bg-[#0071E3]/[0.08] text-[#0071E3] px-2.5 py-1 text-[12px] font-medium leading-none">
+                  <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{invoice.status === 'Convertida' ? 'Proforma · Convertida' : 'Proforma · Sin validez fiscal'}</span>
+                </span>
+              ) : invoice.documentType === 'albaran' ? (
+                <span className={`inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium leading-none ${
+                  invoice.status === 'Facturado' ? 'bg-black/[0.05] text-[#6E6E73]' : 'bg-[#FFF4E5] text-[#B25E09]'
+                }`}>
+                  {invoice.status === 'Facturado' ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  )}
+                  <span>{invoice.status === 'Facturado' ? 'Albarán · Facturado' : 'Albarán · Pendiente'}</span>
+                </span>
+              ) : (
+                <StatusBadge
+                  label={invoice.status}
+                  tone={
+                    invoice.status === 'Cobrada'
+                      ? 'success'
+                      : invoice.status === 'Pendiente'
+                      ? 'warning'
+                      : 'neutral'
+                  }
+                  icon={
+                    invoice.status === 'Cobrada'
+                      ? 'check'
+                      : invoice.status === 'Pendiente'
+                      ? 'clock'
+                      : 'draft'
+                  }
+                />
+              )
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cerrar editor de factura"
+            aria-label="Cerrar editor"
             className="flex h-9 w-9 items-center justify-center rounded-xl text-[#6E6E73] transition-colors hover:bg-[#F5F5F7] hover:text-[#1D1D1F]"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Two-column body: Editor + VeriFactu live preview */}
+        {/* Two-column body: Editor + Status Preview */}
         <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12">
           {/* Left: Form & Lines */}
           <div className="lg:col-span-8 p-6 space-y-6">
+            {/* Top iOS Segmented Control for Document Type */}
+            <div className="space-y-2">
+              <label className="block text-[13px] font-medium text-[#1D1D1F]">
+                Tipo de documento
+              </label>
+              <SegmentedControl<DocumentType>
+                options={DOC_TYPE_OPTIONS}
+                value={documentType}
+                onChange={(next) => {
+                  if (!isLocked && isNew) {
+                    setDocumentType(next);
+                  }
+                }}
+                ariaLabel="Tipo de documento emitido"
+              />
+
+              {/* Discreet explanation of fiscal validity */}
+              <div className="text-[12px] text-[#6E6E73] bg-[#F5F5F7] rounded-xl px-3.5 py-2.5 flex items-start gap-2 border border-black/[0.03]">
+                {documentType === 'normal' && (
+                  <>
+                    <ShieldCheck className="h-4 w-4 text-[#0071E3] shrink-0 mt-0.5" aria-hidden="true" />
+                    <span className="leading-relaxed">
+                      <strong>Validez fiscal plena:</strong> Factura tributaria vinculante conforme al sistema VeriFactu (AEAT). Genera asiento contable y liquidación de impuestos.
+                    </span>
+                  </>
+                )}
+                {documentType === 'proforma' && (
+                  <>
+                    <FileEdit className="h-4 w-4 text-[#0071E3] shrink-0 mt-0.5" aria-hidden="true" />
+                    <span className="leading-relaxed">
+                      <strong>Sin validez fiscal:</strong> Documento preliminar o presupuesto comercial. No computa en IVA ni IRPF; convertible a Factura Normal en 1 clic.
+                    </span>
+                  </>
+                )}
+                {documentType === 'albaran' && (
+                  <>
+                    <FileText className="h-4 w-4 text-[#B25E09] shrink-0 mt-0.5" aria-hidden="true" />
+                    <span className="leading-relaxed">
+                      <strong>Documento de entrega:</strong> Acredita la entrega física o servicio prestado. Sin devengo tributario directo hasta su facturación.
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Albarán sin valorar toggle if type is albaran */}
+            {documentType === 'albaran' && (
+              <div className="flex items-center justify-between rounded-xl bg-[#F5F5F7] px-4 py-3 border border-black/[0.03]">
+                <div>
+                  <p className="text-[13px] font-medium text-[#1D1D1F]">Albarán sin valorar</p>
+                  <p className="text-[12px] text-[#6E6E73] mt-0.5">
+                    Oculta precios e importes económicos en el documento de entrega
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!isValued}
+                  disabled={isLocked}
+                  onClick={() => setIsValued((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${
+                    !isValued ? 'bg-[#0071E3]' : 'bg-black/15'
+                  } disabled:opacity-50`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                      !isValued ? 'translate-x-5' : 'translate-x-0.5'
+                    } mt-0.5`}
+                  />
+                </button>
+              </div>
+            )}
+
             {isLocked && (
               <div className="flex items-start gap-3 rounded-2xl bg-[#F5F5F7] px-4 py-3.5 text-[13px] text-[#1D1D1F]">
                 <Lock className="h-4 w-4 shrink-0 text-[#0071E3] mt-0.5" aria-hidden="true" />
@@ -301,36 +428,33 @@ export function InvoiceEditorModal({
                   ))}
                 </select>
                 {selectedClient && (
-                  <p className="mt-1.5 text-[12px] text-[#6E6E73] font-mono">
-                    NIF/CIF: {selectedClient.nif}
+                  <p className="mt-1.5 text-[12px] text-[#6E6E73]">
+                    NIF: <span className="font-mono text-[#1D1D1F]">{selectedClient.nif}</span> · {selectedClient.activity}
                   </p>
                 )}
               </div>
 
               <div>
-                <label htmlFor="inv-activity" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  Actividad y serie
+                <label htmlFor="inv-number-preview" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                  Número asignado
                 </label>
-                <select
-                  id="inv-activity"
-                  disabled={isLocked}
-                  value={activity}
-                  onChange={(e) => setActivity(e.target.value as ActivityType)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15 disabled:opacity-65"
-                >
-                  <option value="Contabilidad Comunidades">Contabilidad Comunidades (Serie CC)</option>
-                  <option value="Actividad Artística">Actividad Artística (Serie AR)</option>
-                </select>
+                <input
+                  id="inv-number-preview"
+                  type="text"
+                  disabled
+                  value={invoiceNumberInfo.number}
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 font-mono text-[14px] text-[#1D1D1F] border border-transparent opacity-85"
+                />
                 <p className="mt-1.5 text-[12px] text-[#6E6E73]">
-                  Número asignado: <span className="font-mono font-medium text-[#1D1D1F]">{invoiceNumberInfo.number}</span>
+                  Serie: <span className="font-mono font-medium text-[#1D1D1F]">{invoiceNumberInfo.series}</span> · Numeración correlativa
                 </p>
               </div>
             </div>
 
-            {/* Dates */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {/* Dates + Taxes */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
               <div>
-                <label htmlFor="inv-issue-date" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                <label htmlFor="inv-issue-date" className="block text-[12px] font-medium text-[#6E6E73] mb-1">
                   Fecha emisión
                 </label>
                 <input
@@ -339,12 +463,12 @@ export function InvoiceEditorModal({
                   disabled={isLocked}
                   value={issueDate}
                   onChange={(e) => setIssueDate(e.target.value)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2.5 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2 text-[13px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
                 />
               </div>
 
               <div>
-                <label htmlFor="inv-due-date" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                <label htmlFor="inv-due-date" className="block text-[12px] font-medium text-[#6E6E73] mb-1">
                   Vencimiento
                 </label>
                 <input
@@ -353,50 +477,54 @@ export function InvoiceEditorModal({
                   disabled={isLocked}
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2.5 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2 text-[13px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
                 />
               </div>
 
-              <div>
-                <label htmlFor="inv-iva" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  IVA aplicable
-                </label>
-                <select
-                  id="inv-iva"
-                  disabled={isLocked}
-                  value={ivaRate}
-                  onChange={(e) => setIvaRate(Number(e.target.value) as 21 | 10 | 0)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2.5 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
-                >
-                  <option value={21}>21% General</option>
-                  <option value={10}>10% Reducido</option>
-                  <option value={0}>0% Exento</option>
-                </select>
-              </div>
+              {!(documentType === 'albaran' && !isValued) && (
+                <>
+                  <div>
+                    <label htmlFor="inv-iva" className="block text-[12px] font-medium text-[#6E6E73] mb-1">
+                      Tipo IVA
+                    </label>
+                    <select
+                      id="inv-iva"
+                      disabled={isLocked}
+                      value={ivaRate}
+                      onChange={(e) => setIvaRate(Number(e.target.value) as 21 | 10 | 0)}
+                      className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
+                    >
+                      <option value={21}>21% General</option>
+                      <option value={10}>10% Reducido (Arte)</option>
+                      <option value={0}>0% Exento</option>
+                    </select>
+                  </div>
 
-              <div>
-                <label htmlFor="inv-irpf" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  Retención IRPF
-                </label>
-                <select
-                  id="inv-irpf"
-                  disabled={isLocked}
-                  value={irpfRate}
-                  onChange={(e) => setIrpfRate(Number(e.target.value) as IrpfRate)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2.5 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
-                >
-                  <option value={15}>15% IRPF</option>
-                  <option value={7}>7% IRPF</option>
-                  <option value={0}>0% Sin ret.</option>
-                </select>
-              </div>
+                  <div>
+                    <label htmlFor="inv-irpf" className="block text-[12px] font-medium text-[#6E6E73] mb-1">
+                      Retención IRPF
+                    </label>
+                    <select
+                      id="inv-irpf"
+                      disabled={isLocked}
+                      value={irpfRate}
+                      onChange={(e) => setIrpfRate(Number(e.target.value) as IrpfRate)}
+                      className="w-full rounded-xl bg-[#F5F5F7] px-3 py-2 text-[13px] tabular-nums text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-65"
+                    >
+                      <option value={15}>15% IRPF</option>
+                      <option value={7}>7% IRPF</option>
+                      <option value={0}>0% Sin ret.</option>
+                    </select>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Line Items */}
             <div>
               <div className="flex items-center justify-between mb-2.5">
                 <span className="text-[13px] font-semibold text-[#1D1D1F]">
-                  Líneas de concepto
+                  Líneas del documento
                 </span>
                 {!isLocked && (
                   <button
@@ -410,16 +538,81 @@ export function InvoiceEditorModal({
                 )}
               </div>
 
-              <div className="hidden sm:grid sm:grid-cols-12 gap-2.5 px-2.5 pb-1.5 text-[11px] font-medium text-[#86868B]">
-                <span className="col-span-6">Concepto</span>
-                <span className="col-span-2 text-right">Ud.</span>
-                <span className="col-span-2 text-right">Precio (€)</span>
-                <span className="col-span-2 text-right">Importe</span>
-              </div>
+              {documentType === 'albaran' && !isValued ? (
+                <div className="hidden sm:grid sm:grid-cols-12 gap-2.5 px-2.5 pb-1.5 text-[11px] font-medium text-[#86868B]">
+                  <span className="col-span-9">Concepto / Mercancía entregada</span>
+                  <span className="col-span-2 text-right">Cantidad</span>
+                  <span className="col-span-1 text-right"></span>
+                </div>
+              ) : (
+                <div className="hidden sm:grid sm:grid-cols-12 gap-2.5 px-2.5 pb-1.5 text-[11px] font-medium text-[#86868B]">
+                  <span className="col-span-6">Concepto</span>
+                  <span className="col-span-2 text-right">Ud.</span>
+                  <span className="col-span-2 text-right">Precio (€)</span>
+                  <span className="col-span-2 text-right">Importe</span>
+                </div>
+              )}
 
               <div className="space-y-2.5">
                 {lines.map((line, index) => {
                   const subtotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+
+                  if (documentType === 'albaran' && !isValued) {
+                    return (
+                      <div
+                        key={line.id}
+                        className="grid grid-cols-12 gap-2.5 items-center rounded-xl bg-[#F5F5F7]/75 p-2.5"
+                      >
+                        <div className="col-span-12 sm:col-span-9">
+                          <label htmlFor={`line-desc-${line.id}`} className="sr-only">
+                            Descripción línea {index + 1}
+                          </label>
+                          <input
+                            id={`line-desc-${line.id}`}
+                            type="text"
+                            disabled={isLocked}
+                            value={line.description}
+                            onChange={(e) => handleUpdateLine(line.id, 'description', e.target.value)}
+                            placeholder="Ej. Entrega de libros contables o depósito de obra"
+                            className="w-full rounded-lg bg-white px-3 py-2 text-[13px] text-[#1D1D1F] placeholder:text-[#86868B] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent disabled:border-transparent"
+                          />
+                        </div>
+
+                        <div className="col-span-9 sm:col-span-2">
+                          <label htmlFor={`line-qty-${line.id}`} className="sr-only">
+                            Cantidad línea {index + 1}
+                          </label>
+                          <input
+                            id={`line-qty-${line.id}`}
+                            type="number"
+                            min={0.5}
+                            step={0.5}
+                            disabled={isLocked}
+                            value={line.quantity}
+                            onChange={(e) =>
+                              handleUpdateLine(line.id, 'quantity', Math.max(0, Number(e.target.value)))
+                            }
+                            aria-label={`Cantidad línea ${index + 1}`}
+                            className="w-full rounded-lg bg-white px-2.5 py-2 text-right text-[13px] tabular-nums text-[#1D1D1F] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent disabled:border-transparent"
+                          />
+                        </div>
+
+                        <div className="col-span-3 sm:col-span-1 flex items-center justify-end">
+                          {!isLocked && lines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveLine(line.id)}
+                              aria-label={`Eliminar línea ${index + 1}`}
+                              className="rounded-lg p-1 text-[#86868B] hover:bg-[#FDECEC] hover:text-[#C92A2A]"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={line.id}
@@ -435,7 +628,7 @@ export function InvoiceEditorModal({
                           disabled={isLocked}
                           value={line.description}
                           onChange={(e) => handleUpdateLine(line.id, 'description', e.target.value)}
-                          placeholder="Ej. Gestión contable mensual y cierre trimestral"
+                          placeholder="Ej. Gestión contable mensual o encargo artístico"
                           className="w-full rounded-lg bg-white px-3 py-2 text-[13px] text-[#1D1D1F] placeholder:text-[#86868B] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent disabled:border-transparent"
                         />
                       </div>
@@ -501,152 +694,298 @@ export function InvoiceEditorModal({
 
             {/* Real-time Totals Breakdown */}
             <div className="flex justify-end pt-2">
-              <div className="w-full sm:w-80 space-y-2 text-[14px]">
-                <div className="flex justify-between text-[#6E6E73]">
-                  <span>Base imponible</span>
-                  <span className="tabular-nums font-medium text-[#1D1D1F]">
-                    {formatCurrency(totals.baseImponible)}
-                  </span>
+              {documentType === 'albaran' && !isValued ? (
+                <div className="w-full sm:w-80 rounded-xl bg-[#F5F5F7] p-3 text-center text-[13px] text-[#6E6E73] border border-black/[0.03]">
+                  Albarán sin valorar · Sin desglose de importes económicos
                 </div>
-                <div className="flex justify-between text-[#6E6E73]">
-                  <span>IVA ({ivaRate}%)</span>
-                  <span className="tabular-nums text-[#1D1D1F]">
-                    + {formatCurrency(totals.ivaAmount)}
-                  </span>
+              ) : (
+                <div className="w-full sm:w-80 space-y-2 text-[14px]">
+                  <div className="flex justify-between text-[#6E6E73]">
+                    <span>Base imponible</span>
+                    <span className="tabular-nums font-medium text-[#1D1D1F]">
+                      {formatCurrency(totals.baseImponible)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[#6E6E73]">
+                    <span>IVA ({ivaRate}%)</span>
+                    <span className="tabular-nums text-[#1D1D1F]">
+                      + {formatCurrency(totals.ivaAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[#6E6E73]">
+                    <span>Retención IRPF ({irpfRate}%)</span>
+                    <span className="tabular-nums text-[#1D1D1F]">
+                      − {formatCurrency(totals.irpfAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between pt-3 border-t border-black/[0.06] text-[16px] font-semibold text-[#1D1D1F]">
+                    <span>Total {documentType === 'proforma' ? 'proforma' : documentType === 'albaran' ? 'albarán' : 'factura'}</span>
+                    <span className="tabular-nums" data-testid="invoice-editor-total">
+                      {formatCurrency(totals.total)}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-[#6E6E73]">
-                  <span>Retención IRPF ({irpfRate}%)</span>
-                  <span className="tabular-nums text-[#1D1D1F]">
-                    − {formatCurrency(totals.irpfAmount)}
-                  </span>
-                </div>
-                <div className="flex justify-between pt-3 border-t border-black/[0.06] text-[16px] font-semibold text-[#1D1D1F]">
-                  <span>Total factura</span>
-                  <span className="tabular-nums" data-testid="invoice-editor-total">
-                    {formatCurrency(totals.total)}
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
           </div>
 
-          {/* Right: VeriFactu Status & QR Preview */}
+          {/* Right: Status / VeriFactu Preview */}
           <div className="lg:col-span-4 bg-[#F5F5F7] p-6 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-black/[0.05]">
-            <div className="space-y-5">
-              <div>
-                <p className="text-[12px] font-medium text-[#6E6E73]">Estado VeriFactu (AEAT)</p>
-                <div className="mt-2 flex items-center gap-2">
-                  {isLocked ? (
+            {documentType === 'normal' ? (
+              <div className="space-y-5">
+                <div>
+                  <p className="text-[12px] font-medium text-[#6E6E73]">Estado VeriFactu (AEAT)</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    {isLocked ? (
+                      <>
+                        <ShieldCheck className="h-5 w-5 text-[#0071E3]" aria-hidden="true" />
+                        <span className="text-[15px] font-semibold text-[#1D1D1F]">
+                          Emitida y sellada
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <FileEdit className="h-5 w-5 text-[#6E6E73]" aria-hidden="true" />
+                        <span className="text-[15px] font-semibold text-[#1D1D1F]">
+                          Borrador editable
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-[#6E6E73]">
+                    {isLocked
+                      ? 'Registro encadenado inmutable listo para verificación tributaria mediante código QR.'
+                      : 'Al emitir, SelfSME generará la huella encadenada SHA-256, bloqueará la factura y creará el asiento contable.'}
+                  </p>
+                </div>
+
+                {/* QR Preview Surface */}
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
+                  {isLocked && invoice?.veriFactuHash ? (
                     <>
-                      <ShieldCheck className="h-5 w-5 text-[#0071E3]" aria-hidden="true" />
-                      <span className="text-[15px] font-semibold text-[#1D1D1F]">
-                        Emitida y sellada
-                      </span>
+                      <VeriFactuQr seed={invoice.veriFactuHash} size={124} />
+                      <p className="mt-3 text-[11px] font-semibold tracking-wide text-[#0071E3]">
+                        QR tributario · VeriFactu
+                      </p>
+                      <p className="mt-1 font-mono text-[11px] text-[#6E6E73]">
+                        {invoice.veriFactuHash}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-[#86868B]">
+                        Sellada el {formatDateES(invoice.issueDate)}
+                      </p>
                     </>
                   ) : (
-                    <>
-                      <FileEdit className="h-5 w-5 text-[#6E6E73]" aria-hidden="true" />
-                      <span className="text-[15px] font-semibold text-[#1D1D1F]">
-                        Borrador editable
-                      </span>
-                    </>
+                    <div className="py-5 px-2 flex flex-col items-center">
+                      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#86868B]">
+                        <Lock className="h-7 w-7 opacity-60" aria-hidden="true" />
+                      </div>
+                      <p className="mt-3 text-[13px] font-medium text-[#1D1D1F]">
+                        Código QR pendiente de emisión
+                      </p>
+                      <p className="mt-1 text-[12px] text-[#6E6E73] leading-relaxed">
+                        Se generará automáticamente al pulsar «Emitir y bloquear».
+                      </p>
+                    </div>
                   )}
                 </div>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-[#6E6E73]">
-                  {isLocked
-                    ? 'Registro encadenado inmutable listo para verificación tributaria mediante código QR.'
-                    : 'Al emitir, SelfSME generará la huella encadenada SHA-256, bloqueará la factura y creará el asiento contable.'}
-                </p>
-              </div>
 
-              {/* QR Preview Surface */}
-              <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
-                {isLocked && invoice?.veriFactuHash ? (
-                  <>
-                    <VeriFactuQr seed={invoice.veriFactuHash} size={124} />
-                    <p className="mt-3 text-[11px] font-semibold tracking-wide text-[#0071E3]">
-                      QR tributario · VeriFactu
-                    </p>
-                    <p className="mt-1 font-mono text-[11px] text-[#6E6E73]">
-                      {invoice.veriFactuHash}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-[#86868B]">
-                      Sellada el {formatDateES(invoice.issueDate)}
-                    </p>
-                  </>
-                ) : (
-                  <div className="py-5 px-2 flex flex-col items-center">
-                    <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#86868B]">
-                      <Lock className="h-7 w-7 opacity-60" aria-hidden="true" />
-                    </div>
-                    <p className="mt-3 text-[13px] font-medium text-[#1D1D1F]">
-                      Código QR pendiente de emisión
-                    </p>
-                    <p className="mt-1 text-[12px] text-[#6E6E73] leading-relaxed">
-                      Se generará automáticamente al pulsar «Emitir y bloquear».
-                    </p>
+                {/* Summary metadata */}
+                <div className="space-y-2 text-[12px] text-[#6E6E73]">
+                  <div className="flex justify-between">
+                    <span>Serie documental</span>
+                    <span className="font-mono font-medium text-[#1D1D1F]">
+                      {invoiceNumberInfo.number}
+                    </span>
                   </div>
-                )}
+                  <div className="flex justify-between">
+                    <span>Asiento automático PGC</span>
+                    <span className="font-medium text-[#1D1D1F]">
+                      {activity === 'Contabilidad Comunidades' ? '430 → 705 / 477' : '430 → 701 / 477'}
+                    </span>
+                  </div>
+                </div>
               </div>
+            ) : documentType === 'proforma' ? (
+              <div className="space-y-5">
+                <div>
+                  <p className="text-[12px] font-medium text-[#6E6E73]">Régimen documental</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-[#0071E3]" aria-hidden="true" />
+                    <span className="text-[15px] font-semibold text-[#1D1D1F]">
+                      Factura Proforma
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-[#6E6E73]">
+                    Documento informativo de cortesía sin trascendencia contable ni tributaria ante la AEAT. No incluye sello VeriFactu.
+                  </p>
+                </div>
 
-              {/* Summary metadata */}
-              <div className="space-y-2 text-[12px] text-[#6E6E73]">
-                <div className="flex justify-between">
-                  <span>Serie documental</span>
-                  <span className="font-mono font-medium text-[#1D1D1F]">
-                    {invoiceNumberInfo.number}
-                  </span>
+                {/* Info preview card */}
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#0071E3]/[0.08] text-[#0071E3]">
+                    <FileText className="h-7 w-7" aria-hidden="true" />
+                  </div>
+                  <p className="mt-3 text-[13px] font-semibold text-[#1D1D1F]">
+                    Sin validez fiscal · Sin VeriFactu
+                  </p>
+                  <p className="mt-1 text-[12px] text-[#6E6E73] leading-relaxed">
+                    Al ser aceptada por el cliente, pulsa «Convertir a Factura» para generar la factura ordinaria y sellarla.
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <span>Asiento automático PGC</span>
-                  <span className="font-medium text-[#1D1D1F]">
-                    {activity === 'Contabilidad Comunidades' ? '430 → 705 / 477' : '430 → 701 / 477'}
-                  </span>
+
+                {/* Summary metadata */}
+                <div className="space-y-2 text-[12px] text-[#6E6E73]">
+                  <div className="flex justify-between">
+                    <span>Serie documental</span>
+                    <span className="font-mono font-medium text-[#1D1D1F]">
+                      {invoiceNumberInfo.number}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Efecto contable</span>
+                    <span className="font-medium text-[#86868B]">
+                      No genera asiento
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-5">
+                <div>
+                  <p className="text-[12px] font-medium text-[#6E6E73]">Régimen documental</p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-[#B25E09]" aria-hidden="true" />
+                    <span className="text-[15px] font-semibold text-[#1D1D1F]">
+                      Albarán de entrega
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[13px] leading-relaxed text-[#6E6E73]">
+                    Justificante de entrega de material o prestación de servicios. No devenga IVA ni impuestos hasta su facturación.
+                  </p>
+                </div>
+
+                {/* Info preview card */}
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FFF4E5] text-[#B25E09]">
+                    <FileText className="h-7 w-7" aria-hidden="true" />
+                  </div>
+                  <p className="mt-3 text-[13px] font-semibold text-[#1D1D1F]">
+                    {isValued ? 'Albarán Valorado' : 'Albarán Sin Valorar'}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[#6E6E73] leading-relaxed">
+                    {!isValued
+                      ? 'Los importes económicos están ocultos para uso exclusivo de expedición o depósito físico.'
+                      : 'Incluye importes orientativos sin registro en VeriFactu hasta su facturación.'}
+                  </p>
+                </div>
+
+                {/* Summary metadata */}
+                <div className="space-y-2 text-[12px] text-[#6E6E73]">
+                  <div className="flex justify-between">
+                    <span>Serie de expedición</span>
+                    <span className="font-mono font-medium text-[#1D1D1F]">
+                      {invoiceNumberInfo.number}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Efecto contable</span>
+                    <span className="font-medium text-[#86868B]">
+                      Pendiente de facturación
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Action buttons inside sidebar or footer */}
             <div className="mt-6 pt-4 border-t border-black/[0.06] space-y-2.5">
-              {isLocked ? (
+              {documentType === 'normal' ? (
+                isLocked ? (
+                  <>
+                    {invoice?.status === 'Pendiente' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onMarkPaid(invoice.id);
+                          onClose();
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Marcar como cobrada
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.03]"
+                    >
+                      Cerrar vista previa
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleEmitVeriFactu}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                    >
+                      <Lock className="h-4 w-4" />
+                      Emitir y bloquear (VeriFactu)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveDraft}
+                      className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
+                    >
+                      Guardar como borrador
+                    </button>
+                  </>
+                )
+              ) : documentType === 'proforma' ? (
                 <>
-                  {invoice?.status === 'Pendiente' && (
+                  {invoice && invoice.status !== 'Convertida' && onConvertToInvoice && (
                     <button
                       type="button"
                       onClick={() => {
-                        onMarkPaid(invoice.id);
+                        onConvertToInvoice(invoice);
                         onClose();
                       }}
                       className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
                     >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Marcar como cobrada
+                      <FileText className="h-4 w-4" />
+                      Convertir a Factura
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.03]"
-                  >
-                    Cerrar vista previa
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleEmitVeriFactu}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
-                  >
-                    <Lock className="h-4 w-4" />
-                    Emitir y bloquear (VeriFactu)
-                  </button>
                   <button
                     type="button"
                     onClick={handleSaveDraft}
                     className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
                   >
-                    Guardar como borrador
+                    {isNew ? 'Guardar Proforma' : 'Guardar cambios'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {invoice && invoice.status !== 'Facturado' && onConvertToInvoice && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onConvertToInvoice(invoice);
+                        onClose();
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                    >
+                      <FileText className="h-4 w-4" />
+                      Facturar albarán
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
+                  >
+                    {isNew ? 'Guardar Albarán' : 'Guardar cambios'}
                   </button>
                 </>
               )}

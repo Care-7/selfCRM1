@@ -3,6 +3,7 @@ import type {
   ActivityType,
   BalanceSheet,
   DashboardKPIs,
+  DocumentType,
   FinancialRatio,
   InvoiceLine,
   InvoiceTotals,
@@ -114,11 +115,42 @@ export function generateVeriFactuHash(
 
 export function getNextInvoiceNumber(
   invoices: IssuedInvoice[],
-  activity: ActivityType
-): { series: 'CC' | 'AR'; number: string } {
+  activity: ActivityType,
+  documentType: DocumentType = 'normal'
+): { series: 'CC' | 'AR' | 'PRO' | 'ALB' | string; number: string } {
+  if (documentType === 'proforma') {
+    const series = 'PRO';
+    const maxSeq = invoices
+      .filter((inv) => inv.documentType === 'proforma' || inv.number.startsWith('PRO-'))
+      .reduce((max, inv) => {
+        const parts = inv.number.split('-');
+        const seq = Number(parts[parts.length - 1]) || 0;
+        return Math.max(max, seq);
+      }, 0);
+    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    return { series, number: `${series}-2026-${nextSeq}` };
+  }
+
+  if (documentType === 'albaran') {
+    const series = 'ALB';
+    const maxSeq = invoices
+      .filter((inv) => inv.documentType === 'albaran' || inv.number.startsWith('ALB-'))
+      .reduce((max, inv) => {
+        const parts = inv.number.split('-');
+        const seq = Number(parts[parts.length - 1]) || 0;
+        return Math.max(max, seq);
+      }, 0);
+    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    return { series, number: `${series}-2026-${nextSeq}` };
+  }
+
   const series: 'CC' | 'AR' = activity === 'Contabilidad Comunidades' ? 'CC' : 'AR';
   const maxSeq = invoices
-    .filter((inv) => inv.series === series)
+    .filter(
+      (inv) =>
+        (inv.series === series || inv.number.startsWith(`${series}-`)) &&
+        (inv.documentType === undefined || inv.documentType === 'normal')
+    )
     .reduce((max, inv) => {
       const parts = inv.number.split('-');
       const seq = Number(parts[parts.length - 1]) || 0;
@@ -169,6 +201,7 @@ export function calculateDashboardKPIs(
 ): DashboardKPIs {
   const activeIssued = issuedInvoices.filter(
     (inv) =>
+      (inv.documentType === undefined || inv.documentType === 'normal') &&
       inv.status !== 'Borrador' &&
       matchesActivity(inv.activity, activityFilter) &&
       isDateInPeriod(inv.issueDate, period, referenceDate)
@@ -251,6 +284,7 @@ export function calculateMonthlySeries(
       issuedInvoices
         .filter(
           (inv) =>
+            (inv.documentType === undefined || inv.documentType === 'normal') &&
             inv.status !== 'Borrador' &&
             matchesActivity(inv.activity, activityFilter) &&
             inv.issueDate.startsWith(monthKey)
@@ -286,6 +320,7 @@ export function generateJournalEntries(
 
   for (const inv of issuedInvoices) {
     if (inv.status === 'Borrador') continue;
+    if (inv.documentType && inv.documentType !== 'normal') continue;
     if (!matchesActivity(inv.activity, activityFilter)) continue;
 
     const totals = getIssuedInvoiceTotals(inv);
@@ -413,7 +448,10 @@ export function calculateBalanceSheet(
   activityFilter: ActivityFilter
 ): BalanceSheet {
   const issued = issuedInvoices.filter(
-    (inv) => inv.status !== 'Borrador' && matchesActivity(inv.activity, activityFilter)
+    (inv) =>
+      (inv.documentType === undefined || inv.documentType === 'normal') &&
+      inv.status !== 'Borrador' &&
+      matchesActivity(inv.activity, activityFilter)
   );
   const received = receivedInvoices.filter((rec) =>
     matchesActivity(rec.activity, activityFilter)
@@ -619,6 +657,7 @@ export function calculateTaxSummary(
 ): TaxSummary {
   const periodIssued = issuedInvoices.filter(
     (inv) =>
+      (inv.documentType === undefined || inv.documentType === 'normal') &&
       inv.status !== 'Borrador' &&
       matchesActivity(inv.activity, activityFilter) &&
       (regime === 'autonomo'
@@ -637,7 +676,10 @@ export function calculateTaxSummary(
 
   // Annual figures for Impuesto General / Sociedades
   const annualIssued = issuedInvoices.filter(
-    (inv) => inv.status !== 'Borrador' && matchesActivity(inv.activity, activityFilter)
+    (inv) =>
+      (inv.documentType === undefined || inv.documentType === 'normal') &&
+      inv.status !== 'Borrador' &&
+      matchesActivity(inv.activity, activityFilter)
   );
   const annualReceived = receivedInvoices.filter(
     (rec) => rec.deductible && matchesActivity(rec.activity, activityFilter)
@@ -796,7 +838,12 @@ export function getContactTotalVolume(
 ): number {
   if (kind === 'cliente') {
     const active = issuedInvoices
-      .filter((inv) => inv.clientId === contactId && inv.status !== 'Borrador')
+      .filter(
+        (inv) =>
+          inv.clientId === contactId &&
+          inv.status !== 'Borrador' &&
+          (inv.documentType === undefined || inv.documentType === 'normal')
+      )
       .reduce((sum, inv) => sum + getIssuedInvoiceTotals(inv).baseImponible, 0);
     return round2(historicalVolume + active);
   }

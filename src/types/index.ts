@@ -40,12 +40,21 @@ export interface InvoiceLine {
   unitPrice: number;
 }
 
-export type IssuedInvoiceStatus = 'Cobrada' | 'Pendiente' | 'Borrador';
+export type DocumentType = 'normal' | 'proforma' | 'albaran';
+
+export type IssuedInvoiceStatus =
+  | 'Cobrada'
+  | 'Pendiente'
+  | 'Borrador'
+  | 'Facturado'
+  | 'Convertida';
 
 export interface IssuedInvoice {
   id: string;
   number: string;
-  series: 'CC' | 'AR';
+  series: 'CC' | 'AR' | 'PRO' | 'ALB' | string;
+  documentType: DocumentType;
+  isValued?: boolean;
   clientId: string;
   clientName: string;
   clientNif: string;
@@ -59,6 +68,7 @@ export interface IssuedInvoice {
   veriFactuLocked: boolean;
   veriFactuHash?: string;
   veriFactuTimestamp?: string;
+  convertedToInvoiceId?: string;
 }
 
 export type ReceivedInvoiceStatus = 'Contabilizada' | 'Pendiente';

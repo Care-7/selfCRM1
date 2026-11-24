@@ -6,6 +6,7 @@ import type {
   Contact,
   ContactKind,
   IssuedInvoice,
+  IssuedInvoiceStatus,
   NavSection,
   PeriodFilter,
   ReceivedInvoice,
@@ -18,7 +19,9 @@ import {
   INITIAL_RECEIVED_INVOICES,
   INITIAL_SUPPLIERS,
   INITIAL_USER_PROFILE,
+  REFERENCE_DATE,
 } from './data/mockData';
+import { getNextInvoiceNumber } from './utils/finance';
 import { Sidebar } from './components/Sidebar';
 import { ContactSlideOver } from './components/ContactSlideOver';
 import { InvoiceEditorModal } from './components/InvoiceEditorModal';
@@ -103,6 +106,53 @@ export default function App() {
       prev.map((inv) => (inv.id === invoiceId ? { ...inv, status: 'Cobrada' } : inv))
     );
     showToast('Cobro registrado correctamente.');
+  };
+
+  const handleConvertDocumentToInvoice = (doc: IssuedInvoice) => {
+    const numInfo = getNextInvoiceNumber(issuedInvoices, doc.activity, 'normal');
+
+    const newInvoice: IssuedInvoice = {
+      id: `inv-${Date.now()}`,
+      number: numInfo.number,
+      series: numInfo.series,
+      documentType: 'normal',
+      clientId: doc.clientId,
+      clientName: doc.clientName,
+      clientNif: doc.clientNif,
+      activity: doc.activity,
+      issueDate: REFERENCE_DATE,
+      dueDate: doc.dueDate || '2026-12-24',
+      lines: doc.lines.map((l, idx) => ({
+        ...l,
+        id: `line-${Date.now()}-${idx}`,
+      })),
+      ivaRate: doc.ivaRate,
+      irpfRate: doc.irpfRate,
+      status: 'Borrador',
+      veriFactuLocked: false,
+    };
+
+    const updatedStatus: IssuedInvoiceStatus =
+      doc.documentType === 'albaran' ? 'Facturado' : 'Convertida';
+
+    setIssuedInvoices((prev) => [
+      newInvoice,
+      ...prev.map((inv) =>
+        inv.id === doc.id
+          ? {
+              ...inv,
+              status: updatedStatus,
+              convertedToInvoiceId: newInvoice.id,
+            }
+          : inv
+      ),
+    ]);
+
+    if (doc.documentType === 'albaran') {
+      showToast(`Albarán ${doc.number} facturado. Se ha creado el borrador ${newInvoice.number}.`);
+    } else {
+      showToast(`Proforma ${doc.number} convertida. Se ha creado el borrador ${newInvoice.number}.`);
+    }
   };
 
   const handleSaveReceivedExpense = (expense: ReceivedInvoice) => {
@@ -211,6 +261,7 @@ export default function App() {
               onOpenNewInvoice={() => setInvoiceModal({ open: true, invoice: null })}
               onSelectIssuedInvoice={(invoice) => setInvoiceModal({ open: true, invoice })}
               onOpenAiExpenseModal={() => setAiExpenseOpen(true)}
+              onConvertToInvoice={handleConvertDocumentToInvoice}
             />
           )}
 
@@ -255,6 +306,7 @@ export default function App() {
         onClose={() => setInvoiceModal({ open: false, invoice: null })}
         onSaveInvoice={handleSaveInvoice}
         onMarkPaid={handleMarkInvoicePaid}
+        onConvertToInvoice={handleConvertDocumentToInvoice}
       />
 
       <AiExpenseModal
