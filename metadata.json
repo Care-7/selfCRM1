@@ -1,0 +1,6 @@
+{
+  "name": "SelfSME",
+  "description": "CRM, facturación VeriFactu y contabilidad minimalista para autónomos y pymes en España.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
