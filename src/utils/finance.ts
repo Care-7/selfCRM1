@@ -144,6 +144,19 @@ export function getNextInvoiceNumber(
     return { series, number: `${series}-2026-${nextSeq}` };
   }
 
+  if (documentType === 'rectificativa') {
+    const series = 'RECT';
+    const maxSeq = invoices
+      .filter((inv) => inv.documentType === 'rectificativa' || inv.number.startsWith('RECT-'))
+      .reduce((max, inv) => {
+        const parts = inv.number.split('-');
+        const seq = Number(parts[parts.length - 1]) || 0;
+        return Math.max(max, seq);
+      }, 0);
+    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    return { series, number: `${series}-2026-${nextSeq}` };
+  }
+
   const series: 'CC' | 'AR' = activity === 'Contabilidad Comunidades' ? 'CC' : 'AR';
   const maxSeq = invoices
     .filter(

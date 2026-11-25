@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import type {
   ActivityType,
@@ -26,7 +28,7 @@ import {
   getNextInvoiceNumber,
 } from '../utils/finance';
 import { REFERENCE_DATE } from '../data/mockData';
-import { VeriFactuQr } from './VeriFactuQr';
+import { VerifactuBadgeCard } from './VerifactuBadgeCard';
 import { StatusBadge } from './StatusBadge';
 import { SegmentedControl } from './SegmentedControl';
 
@@ -36,16 +38,25 @@ interface InvoiceEditorModalProps {
   clients: Contact[];
   allIssuedInvoices: IssuedInvoice[];
   defaultActivity: ActivityType;
+  initialRectifiedInvoice?: IssuedInvoice | null;
   onClose: () => void;
-  onSaveInvoice: (invoice: IssuedInvoice, isNew: boolean) => void;
-  onMarkPaid: (invoiceId: string) => void;
-  onConvertToInvoice?: (doc: IssuedInvoice) => void;
+  onSaveInvoice: (
+    invoice: IssuedInvoice,
+    isNew: boolean,
+    rectifiedInvoiceId?: string,
+    rectificationReason?: string
+  ) => Promise<void> | void;
+  onMarkPaid: (invoiceId: string) => Promise<void> | void;
+  onConvertToInvoice?: (doc: IssuedInvoice) => Promise<void> | void;
+  onDeleteDocument?: (doc: IssuedInvoice) => Promise<void> | void;
+  onEmitRectificativa?: (invoice: IssuedInvoice) => void;
 }
 
 const DOC_TYPE_OPTIONS: { value: DocumentType; label: string }[] = [
   { value: 'normal', label: 'Factura Normal' },
   { value: 'proforma', label: 'Proforma' },
   { value: 'albaran', label: 'Albarán' },
+  { value: 'rectificativa', label: 'Rectificativa' },
 ];
 
 export function InvoiceEditorModal({
@@ -54,10 +65,13 @@ export function InvoiceEditorModal({
   clients,
   allIssuedInvoices,
   defaultActivity,
+  initialRectifiedInvoice,
   onClose,
   onSaveInvoice,
   onMarkPaid,
   onConvertToInvoice,
+  onDeleteDocument,
+  onEmitRectificativa,
 }: InvoiceEditorModalProps) {
   const isLocked = Boolean(invoice?.veriFactuLocked);
   const isNew = !invoice;
@@ -71,11 +85,15 @@ export function InvoiceEditorModal({
   const [ivaRate, setIvaRate] = useState<21 | 10 | 0>(21);
   const [irpfRate, setIrpfRate] = useState<IrpfRate>(15);
   const [lines, setLines] = useState<InvoiceLine[]>([]);
+  const [rectifiedInvoiceId, setRectifiedInvoiceId] = useState<string>('');
+  const [rectificationReason, setRectificationReason] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg('');
+    setIsSubmitting(false);
 
     if (invoice) {
       setDocumentType(invoice.documentType ?? 'normal');
@@ -87,9 +105,34 @@ export function InvoiceEditorModal({
       setIvaRate(invoice.ivaRate);
       setIrpfRate(invoice.irpfRate);
       setLines(invoice.lines.map((l) => ({ ...l })));
+      setRectifiedInvoiceId(invoice.rectifiedInvoiceId || '');
+      setRectificationReason(invoice.rectificationReason || '');
+    } else if (initialRectifiedInvoice) {
+      // Opening in rectification mode for a specific invoice
+      setDocumentType('rectificativa');
+      setIsValued(true);
+      setClientId(initialRectifiedInvoice.clientId);
+      setActivity(initialRectifiedInvoice.activity);
+      setIssueDate(REFERENCE_DATE);
+      setDueDate(REFERENCE_DATE);
+      setIvaRate(initialRectifiedInvoice.ivaRate);
+      setIrpfRate(initialRectifiedInvoice.irpfRate);
+      setRectifiedInvoiceId(initialRectifiedInvoice.id);
+      setRectificationReason(`Rectificación de la factura ${initialRectifiedInvoice.number}`);
+      // Default negative quantities to represent an abono
+      setLines(
+        initialRectifiedInvoice.lines.map((l, idx) => ({
+          id: `line-rect-${Date.now()}-${idx}`,
+          description: `Abono: ${l.description}`,
+          quantity: -Math.abs(l.quantity || 1),
+          unitPrice: l.unitPrice,
+        }))
+      );
     } else {
       setDocumentType('normal');
       setIsValued(true);
+      setRectifiedInvoiceId('');
+      setRectificationReason('');
       const initialClient =
         clients.find((c) => c.activity === defaultActivity && c.status === 'Activo') ??
         clients[0];
@@ -115,7 +158,7 @@ export function InvoiceEditorModal({
         },
       ]);
     }
-  }, [isOpen, invoice, clients, defaultActivity]);
+  }, [isOpen, invoice, initialRectifiedInvoice, clients, defaultActivity]);
 
   const selectedClient = useMemo(
     () => clients.find((c) => c.id === clientId),
@@ -176,12 +219,22 @@ export function InvoiceEditorModal({
       setErrorMsg('Añade al menos una línea de concepto con descripción.');
       return null;
     }
-    if (documentType !== 'albaran' && totals.baseImponible <= 0) {
+    if (documentType === 'normal' && totals.baseImponible <= 0) {
       setErrorMsg('El importe de la base imponible debe ser superior a 0 €.');
       return null;
     }
+    if (documentType === 'rectificativa') {
+      if (totals.baseImponible === 0) {
+        setErrorMsg('El importe de la factura rectificativa no puede ser 0 €.');
+        return null;
+      }
+      if (!rectificationReason.trim()) {
+        setErrorMsg('Especifica el motivo de la rectificación (obligatorio según VeriFactu).');
+        return null;
+      }
+    }
 
-    const shouldLock = emitVeriFactu && documentType === 'normal';
+    const shouldLock = emitVeriFactu && (documentType === 'normal' || documentType === 'rectificativa');
     const hash = shouldLock
       ? generateVeriFactuHash(
           invoiceNumberInfo.number,
@@ -210,27 +263,45 @@ export function InvoiceEditorModal({
         ? 'Pendiente'
         : invoice
         ? invoice.status
-        : documentType === 'normal'
+        : (documentType === 'normal' || documentType === 'rectificativa')
         ? 'Borrador'
         : 'Pendiente',
       veriFactuLocked: shouldLock,
       veriFactuHash: hash,
       veriFactuTimestamp: shouldLock ? new Date().toISOString() : undefined,
+      rectifiedInvoiceId: documentType === 'rectificativa' ? (rectifiedInvoiceId || undefined) : undefined,
+      rectificationReason: documentType === 'rectificativa' ? (rectificationReason || undefined) : undefined,
     };
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     const built = validateAndBuild(false);
     if (!built) return;
-    onSaveInvoice(built, isNew);
-    onClose();
+    try {
+      setIsSubmitting(true);
+      setErrorMsg('');
+      await onSaveInvoice(built, isNew, rectifiedInvoiceId, rectificationReason);
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error al guardar el documento.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleEmitVeriFactu = () => {
+  const handleEmitVeriFactu = async () => {
     const built = validateAndBuild(true);
     if (!built) return;
-    onSaveInvoice(built, isNew);
-    onClose();
+    try {
+      setIsSubmitting(true);
+      setErrorMsg('');
+      await onSaveInvoice(built, isNew, rectifiedInvoiceId, rectificationReason);
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error al emitir la factura en VeriFactu.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -257,11 +328,13 @@ export function InvoiceEditorModal({
               {isNew ? (
                 documentType === 'normal'
                   ? 'Nueva Factura emitida'
+                  : documentType === 'rectificativa'
+                  ? 'Nueva Factura Rectificativa'
                   : documentType === 'proforma'
                   ? 'Nueva Factura Proforma'
                   : 'Nuevo Albarán'
               ) : (
-                `${invoice.documentType === 'proforma' ? 'Proforma' : invoice.documentType === 'albaran' ? 'Albarán' : 'Factura'} ${invoice.number}`
+                `${invoice.documentType === 'proforma' ? 'Proforma' : invoice.documentType === 'albaran' ? 'Albarán' : invoice.documentType === 'rectificativa' ? 'Rectificativa' : 'Factura'} ${invoice.number}`
               )}
             </h2>
 
@@ -281,6 +354,11 @@ export function InvoiceEditorModal({
                     <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   )}
                   <span>{invoice.status === 'Facturado' ? 'Albarán · Facturado' : 'Albarán · Pendiente'}</span>
+                </span>
+              ) : invoice.documentType === 'rectificativa' ? (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-lg bg-[#FFF0F0] text-[#D32F2F] px-2.5 py-1 text-[12px] font-medium leading-none">
+                  <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>Rectificativa · {invoice.status}</span>
                 </span>
               ) : (
                 <StatusBadge
@@ -343,6 +421,14 @@ export function InvoiceEditorModal({
                     </span>
                   </>
                 )}
+                {documentType === 'rectificativa' && (
+                  <>
+                    <ShieldCheck className="h-4 w-4 text-[#D32F2F] shrink-0 mt-0.5" aria-hidden="true" />
+                    <span className="leading-relaxed">
+                      <strong>Factura Rectificativa:</strong> Modifica o anula una factura anterior. Sujeta a encadenamiento VeriFactu y requiere consignar el motivo fiscal.
+                    </span>
+                  </>
+                )}
                 {documentType === 'proforma' && (
                   <>
                     <FileEdit className="h-4 w-4 text-[#0071E3] shrink-0 mt-0.5" aria-hidden="true" />
@@ -361,6 +447,29 @@ export function InvoiceEditorModal({
                 )}
               </div>
             </div>
+
+            {/* Motivo de rectificación si es rectificativa */}
+            {documentType === 'rectificativa' && (
+              <div className="rounded-xl bg-[#F5F5F7] p-4 border border-black/[0.04] space-y-2">
+                <label htmlFor="inv-rectification-reason" className="block text-[13px] font-semibold text-[#1D1D1F]">
+                  Motivo de rectificación (requerido por AEAT / VeriFactu)
+                </label>
+                <input
+                  id="inv-rectification-reason"
+                  type="text"
+                  disabled={isLocked}
+                  value={rectificationReason}
+                  onChange={(e) => setRectificationReason(e.target.value)}
+                  placeholder="Ej. Devolución de mercancía, corrección de tipo impositivo, abono..."
+                  className="w-full rounded-lg bg-white px-3.5 py-2 text-[13px] text-[#1D1D1F] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent"
+                />
+                {initialRectifiedInvoice && (
+                  <p className="text-[12px] text-[#6E6E73]">
+                    Factura de origen a rectificar: <span className="font-mono font-medium text-[#1D1D1F]">{initialRectifiedInvoice.number}</span>
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Albarán sin valorar toggle if type is albaran */}
             {documentType === 'albaran' && (
@@ -640,12 +749,17 @@ export function InvoiceEditorModal({
                         <input
                           id={`line-qty-${line.id}`}
                           type="number"
-                          min={0.5}
-                          step={0.5}
+                          step={documentType === 'rectificativa' ? 1 : 0.5}
                           disabled={isLocked}
                           value={line.quantity}
                           onChange={(e) =>
-                            handleUpdateLine(line.id, 'quantity', Math.max(0, Number(e.target.value)))
+                            handleUpdateLine(
+                              line.id,
+                              'quantity',
+                              documentType === 'rectificativa'
+                                ? Number(e.target.value)
+                                : Math.max(0, Number(e.target.value))
+                            )
                           }
                           aria-label={`Cantidad línea ${index + 1}`}
                           className="w-full rounded-lg bg-white px-2.5 py-2 text-right text-[13px] tabular-nums text-[#1D1D1F] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent disabled:border-transparent"
@@ -659,12 +773,17 @@ export function InvoiceEditorModal({
                         <input
                           id={`line-price-${line.id}`}
                           type="number"
-                          min={0}
                           step={10}
                           disabled={isLocked}
                           value={line.unitPrice}
                           onChange={(e) =>
-                            handleUpdateLine(line.id, 'unitPrice', Math.max(0, Number(e.target.value)))
+                            handleUpdateLine(
+                              line.id,
+                              'unitPrice',
+                              documentType === 'rectificativa'
+                                ? Number(e.target.value)
+                                : Math.max(0, Number(e.target.value))
+                            )
                           }
                           aria-label={`Precio unitario línea ${index + 1}`}
                           className="w-full rounded-lg bg-white px-2.5 py-2 text-right text-[13px] tabular-nums text-[#1D1D1F] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none disabled:bg-transparent disabled:border-transparent"
@@ -731,10 +850,12 @@ export function InvoiceEditorModal({
 
           {/* Right: Status / VeriFactu Preview */}
           <div className="lg:col-span-4 bg-[#F5F5F7] p-6 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-black/[0.05]">
-            {documentType === 'normal' ? (
+            {documentType === 'normal' || documentType === 'rectificativa' ? (
               <div className="space-y-5">
                 <div>
-                  <p className="text-[12px] font-medium text-[#6E6E73]">Estado VeriFactu (AEAT)</p>
+                  <p className="text-[12px] font-medium text-[#6E6E73]">
+                    {documentType === 'rectificativa' ? 'Estado Fiscal Rectificativa' : 'Estado VeriFactu (AEAT)'}
+                  </p>
                   <div className="mt-2 flex items-center gap-2">
                     {isLocked ? (
                       <>
@@ -759,22 +880,17 @@ export function InvoiceEditorModal({
                   </p>
                 </div>
 
-                {/* QR Preview Surface */}
-                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
-                  {isLocked && invoice?.veriFactuHash ? (
-                    <>
-                      <VeriFactuQr seed={invoice.veriFactuHash} size={124} />
-                      <p className="mt-3 text-[11px] font-semibold tracking-wide text-[#0071E3]">
-                        QR tributario · VeriFactu
-                      </p>
-                      <p className="mt-1 font-mono text-[11px] text-[#6E6E73]">
-                        {invoice.veriFactuHash}
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-[#86868B]">
-                        Sellada el {formatDateES(invoice.issueDate)}
-                      </p>
-                    </>
-                  ) : (
+                {/* VeriFactu Badge Card or Pending Placeholder */}
+                {isLocked && invoice?.veriFactuHash ? (
+                  <VerifactuBadgeCard
+                    invoiceNumber={invoice.number}
+                    hash={invoice.veriFactuHash}
+                    prevHash={invoice.verifactuPrevHash}
+                    timestamp={invoice.veriFactuTimestamp}
+                    qrUrl={invoice.verifactuQrUrl}
+                  />
+                ) : (
+                  <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
                     <div className="py-5 px-2 flex flex-col items-center">
                       <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#86868B]">
                         <Lock className="h-7 w-7 opacity-60" aria-hidden="true" />
@@ -786,8 +902,8 @@ export function InvoiceEditorModal({
                         Se generará automáticamente al pulsar «Emitir y bloquear».
                       </p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Summary metadata */}
                 <div className="space-y-2 text-[12px] text-[#6E6E73]">
@@ -899,24 +1015,48 @@ export function InvoiceEditorModal({
 
             {/* Action buttons inside sidebar or footer */}
             <div className="mt-6 pt-4 border-t border-black/[0.06] space-y-2.5">
-              {documentType === 'normal' ? (
+              {documentType === 'normal' || documentType === 'rectificativa' ? (
                 isLocked ? (
                   <>
                     {invoice?.status === 'Pendiente' && (
                       <button
                         type="button"
+                        disabled={isSubmitting}
+                        onClick={async () => {
+                          try {
+                            setIsSubmitting(true);
+                            setErrorMsg('');
+                            await onMarkPaid(invoice.id);
+                            onClose();
+                          } catch (err: any) {
+                            setErrorMsg(err.message || 'Error al registrar el cobro.');
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                      >
+                        {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                        Marcar como cobrada
+                      </button>
+                    )}
+                    {documentType === 'normal' && onEmitRectificativa && invoice && (
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
                         onClick={() => {
-                          onMarkPaid(invoice.id);
+                          onEmitRectificativa(invoice);
                           onClose();
                         }}
-                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.06] px-4 py-2.5 text-[14px] font-medium text-[#D32F2F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-[#FFF0F0] disabled:opacity-50"
                       >
-                        <CheckCircle2 className="h-4 w-4" />
-                        Marcar como cobrada
+                        <FileEdit className="h-4 w-4" />
+                        Emitir factura rectificativa
                       </button>
                     )}
                     <button
                       type="button"
+                      disabled={isSubmitting}
                       onClick={onClose}
                       className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.03]"
                     >
@@ -927,16 +1067,18 @@ export function InvoiceEditorModal({
                   <>
                     <button
                       type="button"
+                      disabled={isSubmitting}
                       onClick={handleEmitVeriFactu}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
                     >
-                      <Lock className="h-4 w-4" />
+                      {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
                       Emitir y bloquear (VeriFactu)
                     </button>
                     <button
                       type="button"
+                      disabled={isSubmitting}
                       onClick={handleSaveDraft}
-                      className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
+                      className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04] disabled:opacity-50"
                     >
                       Guardar como borrador
                     </button>
@@ -947,46 +1089,114 @@ export function InvoiceEditorModal({
                   {invoice && invoice.status !== 'Convertida' && onConvertToInvoice && (
                     <button
                       type="button"
-                      onClick={() => {
-                        onConvertToInvoice(invoice);
-                        onClose();
+                      disabled={isSubmitting}
+                      onClick={async () => {
+                        try {
+                          setIsSubmitting(true);
+                          setErrorMsg('');
+                          await onConvertToInvoice(invoice);
+                          onClose();
+                        } catch (err: any) {
+                          setErrorMsg(err.message || 'Error al convertir la proforma.');
+                        } finally {
+                          setIsSubmitting(false);
+                        }
                       }}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
                     >
-                      <FileText className="h-4 w-4" />
+                      {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                       Convertir a Factura
                     </button>
                   )}
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={handleSaveDraft}
-                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
+                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04] disabled:opacity-50"
                   >
                     {isNew ? 'Guardar Proforma' : 'Guardar cambios'}
                   </button>
+                  {invoice && onDeleteDocument && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={async () => {
+                        if (window.confirm('¿Estás seguro de eliminar esta proforma?')) {
+                          try {
+                            setIsSubmitting(true);
+                            setErrorMsg('');
+                            await onDeleteDocument(invoice);
+                            onClose();
+                          } catch (err: any) {
+                            setErrorMsg(err.message || 'Error al eliminar la proforma.');
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-medium text-[#C92A2A] hover:bg-[#FDECEC] transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Eliminar proforma
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
                   {invoice && invoice.status !== 'Facturado' && onConvertToInvoice && (
                     <button
                       type="button"
-                      onClick={() => {
-                        onConvertToInvoice(invoice);
-                        onClose();
+                      disabled={isSubmitting}
+                      onClick={async () => {
+                        try {
+                          setIsSubmitting(true);
+                          setErrorMsg('');
+                          await onConvertToInvoice(invoice);
+                          onClose();
+                        } catch (err: any) {
+                          setErrorMsg(err.message || 'Error al facturar el albarán.');
+                        } finally {
+                          setIsSubmitting(false);
+                        }
                       }}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED]"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
                     >
-                      <FileText className="h-4 w-4" />
+                      {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                       Facturar albarán
                     </button>
                   )}
                   <button
                     type="button"
+                    disabled={isSubmitting}
                     onClick={handleSaveDraft}
-                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04]"
+                    className="w-full rounded-xl bg-white px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04] disabled:opacity-50"
                   >
                     {isNew ? 'Guardar Albarán' : 'Guardar cambios'}
                   </button>
+                  {invoice && onDeleteDocument && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={async () => {
+                        if (window.confirm('¿Estás seguro de eliminar este albarán?')) {
+                          try {
+                            setIsSubmitting(true);
+                            setErrorMsg('');
+                            await onDeleteDocument(invoice);
+                            onClose();
+                          } catch (err: any) {
+                            setErrorMsg(err.message || 'Error al eliminar el albarán.');
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }
+                      }}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-[13px] font-medium text-[#C92A2A] hover:bg-[#FDECEC] transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Eliminar albarán
+                    </button>
+                  )}
                 </>
               )}
             </div>

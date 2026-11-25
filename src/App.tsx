@@ -55,9 +55,22 @@ import {
   archiveSupplier,
 } from './services/suppliersService';
 import {
+  listIssuedInvoices,
+  issueInvoice,
+  updateInvoicePaymentStatus,
+  convertDraftDocumentToNormal,
+  deleteNonFiscalDocument,
+} from './services/issuedInvoicesService';
+import {
   clientRowToContact,
   supplierRowToContact,
 } from './services/contactMappers';
+import {
+  invoiceRowToIssuedInvoice,
+  createIssuerSnapshot,
+  createClientSnapshot,
+  convertInvoiceLinesToDbItems,
+} from './services/invoiceMappers';
 import { isValidUuid } from './services/databaseErrors';
 
 function MainApp() {
@@ -110,12 +123,14 @@ function MainApp() {
     invoice: IssuedInvoice | null;
   }>({ open: false, invoice: null });
 
+  const [rectifyingInvoice, setRectifyingInvoice] = useState<IssuedInvoice | null>(null);
   const [aiExpenseOpen, setAiExpenseOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
 
-  // Subtle loading state for Supabase contacts
+  // Subtle loading state for Supabase data
   const [isContactsLoading, setIsContactsLoading] = useState(false);
+  const [isInvoicesLoading, setIsInvoicesLoading] = useState(false);
 
   // Subtle confirmation feedback toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -127,31 +142,37 @@ function MainApp() {
     }, 3400);
   };
 
-  // Load real clients and suppliers from Supabase when organization is active and auth loading is done
+  // Load real clients, suppliers, and issued invoices from Supabase when organization is active and auth loading is done
   useEffect(() => {
     if (isConfigured && !loading && session && organization?.id) {
       let isMounted = true;
       setIsContactsLoading(true);
+      setIsInvoicesLoading(true);
 
       Promise.all([
         listClients(organization.id),
         listSuppliers(organization.id),
+        listIssuedInvoices(organization.id),
       ])
-        .then(([clientsRows, suppliersRows]) => {
+        .then(([clientsRows, suppliersRows, invoicesRows]) => {
           if (!isMounted) return;
           setClients(clientsRows.map((r) => clientRowToContact(r, activities)));
           setSuppliers(suppliersRows.map((r) => supplierRowToContact(r, activities)));
+          setIssuedInvoices(invoicesRows.map((r) => invoiceRowToIssuedInvoice(r, activities)));
         })
         .catch((err) => {
-          console.error('Error al sincronizar clientes/proveedores desde Supabase:', err);
+          console.error('Error al sincronizar datos desde Supabase:', err);
           showToast(
             err instanceof Error
               ? err.message
-              : 'Error al sincronizar los contactos de Supabase. Revisa tu conexión.'
+              : 'Error al sincronizar los datos de Supabase. Revisa tu conexión.'
           );
         })
         .finally(() => {
-          if (isMounted) setIsContactsLoading(false);
+          if (isMounted) {
+            setIsContactsLoading(false);
+            setIsInvoicesLoading(false);
+          }
         });
 
       return () => {
@@ -325,69 +346,215 @@ function MainApp() {
     showToast(nextActive ? 'Contacto reactivado.' : 'Contacto archivado.');
   };
 
-  const handleSaveInvoice = (saved: IssuedInvoice, isNew: boolean) => {
-    setIssuedInvoices((prev) =>
-      isNew ? [saved, ...prev] : prev.map((inv) => (inv.id === saved.id ? saved : inv))
-    );
-    showToast(
-      saved.veriFactuLocked
-        ? `Factura ${saved.number} emitida, sellada en VeriFactu y contabilizada.`
-        : `Borrador ${saved.number} guardado.`
-    );
-  };
+  const handleSaveInvoice = async (
+    saved: IssuedInvoice,
+    isNew: boolean,
+    rectifiedInvoiceId?: string,
+    rectificationReason?: string
+  ) => {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa o sesión válida en Supabase.');
+      }
 
-  const handleMarkInvoicePaid = (invoiceId: string) => {
-    setIssuedInvoices((prev) =>
-      prev.map((inv) => (inv.id === invoiceId ? { ...inv, status: 'Cobrada' } : inv))
-    );
-    showToast('Cobro registrado correctamente.');
-  };
+      const matchedActivity = activities.find(
+        (a) => a.id === saved.activityId || a.name === saved.activity
+      );
+      const targetActivityId =
+        matchedActivity && isValidUuid(matchedActivity.id)
+          ? matchedActivity.id
+          : isValidUuid(saved.activityId)
+          ? saved.activityId!
+          : null;
 
-  const handleConvertDocumentToInvoice = (doc: IssuedInvoice) => {
-    const numInfo = getNextInvoiceNumber(issuedInvoices, doc.activity, 'normal');
+      const targetClientId = isValidUuid(saved.clientId) ? saved.clientId : null;
 
-    const newInvoice: IssuedInvoice = {
-      id: `inv-${Date.now()}`,
-      number: numInfo.number,
-      series: numInfo.series,
-      documentType: 'normal',
-      clientId: doc.clientId,
-      clientName: doc.clientName,
-      clientNif: doc.clientNif,
-      activity: doc.activity,
-      issueDate: REFERENCE_DATE,
-      dueDate: doc.dueDate || '2026-12-24',
-      lines: doc.lines.map((l, idx) => ({
-        ...l,
-        id: `line-${Date.now()}-${idx}`,
-      })),
-      ivaRate: doc.ivaRate,
-      irpfRate: doc.irpfRate,
-      status: 'Borrador',
-      veriFactuLocked: false,
-    };
+      const issuerSnapshot = createIssuerSnapshot(organization, profile);
+      const clientSnapshot = createClientSnapshot({
+        name: saved.clientName,
+        nif: saved.clientNif,
+      });
 
-    const updatedStatus: IssuedInvoiceStatus =
-      doc.documentType === 'albaran' ? 'Facturado' : 'Convertida';
+      const dbLines = convertInvoiceLinesToDbItems(
+        saved.lines,
+        saved.ivaRate,
+        saved.irpfRate
+      );
 
-    setIssuedInvoices((prev) => [
-      newInvoice,
-      ...prev.map((inv) =>
-        inv.id === doc.id
-          ? {
-              ...inv,
-              status: updatedStatus,
-              convertedToInvoiceId: newInvoice.id,
-            }
-          : inv
-      ),
-    ]);
+      let taxBase = 0;
+      let vatTotal = 0;
+      let irpfTotal = 0;
+      let totalAmount = 0;
+      for (const l of dbLines) {
+        taxBase += l.tax_base;
+        vatTotal += l.vat_amount;
+        irpfTotal += l.irpf_amount;
+        totalAmount += l.total;
+      }
 
-    if (doc.documentType === 'albaran') {
-      showToast(`Albarán ${doc.number} facturado. Se ha creado el borrador ${newInvoice.number}.`);
+      // Round to 2 decimals
+      taxBase = Math.round(taxBase * 100) / 100;
+      vatTotal = Math.round(vatTotal * 100) / 100;
+      irpfTotal = Math.round(irpfTotal * 100) / 100;
+      totalAmount = Math.round(totalAmount * 100) / 100;
+
+      const row = await issueInvoice({
+        organization_id: organization.id,
+        series: saved.series,
+        document_type: saved.documentType,
+        activity_id: targetActivityId,
+        client_id: targetClientId,
+        issuer_snapshot: issuerSnapshot,
+        client_snapshot: clientSnapshot,
+        lines: dbLines,
+        tax_base: taxBase,
+        vat_total: vatTotal,
+        irpf_total: irpfTotal,
+        total_amount: totalAmount,
+        issue_date: saved.issueDate,
+        due_date: saved.dueDate || null,
+        payment_status: saved.status === 'Cobrada' ? 'paid' : 'pending',
+        rectified_invoice_id: rectifiedInvoiceId || saved.rectifiedInvoiceId || null,
+        rectification_reason: rectificationReason || saved.rectificationReason || null,
+        converted_from_id: saved.convertedFromId || null,
+        is_migrated: saved.isMigrated ?? false,
+      });
+
+      // ONLY mutate state on confirmed database persistence
+      const mapped = invoiceRowToIssuedInvoice(row, activities);
+      setIssuedInvoices((prev) => [mapped, ...prev]);
+      showToast(
+        mapped.veriFactuLocked
+          ? `Factura ${mapped.number} emitida y sellada en VeriFactu.`
+          : `${mapped.documentType === 'proforma' ? 'Proforma' : mapped.documentType === 'albaran' ? 'Albarán' : 'Borrador'} ${mapped.number} guardado.`
+      );
     } else {
-      showToast(`Proforma ${doc.number} convertida. Se ha creado el borrador ${newInvoice.number}.`);
+      setIssuedInvoices((prev) =>
+        isNew ? [saved, ...prev] : prev.map((inv) => (inv.id === saved.id ? saved : inv))
+      );
+      showToast(
+        saved.veriFactuLocked
+          ? `Factura ${saved.number} emitida, sellada en VeriFactu y contabilizada.`
+          : `Borrador ${saved.number} guardado.`
+      );
     }
+  };
+
+  const handleMarkInvoicePaid = async (invoiceId: string) => {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa en Supabase.');
+      }
+      const row = await updateInvoicePaymentStatus(invoiceId, organization.id, 'paid');
+      const mapped = invoiceRowToIssuedInvoice(row, activities);
+      setIssuedInvoices((prev) =>
+        prev.map((inv) => (inv.id === invoiceId ? mapped : inv))
+      );
+      showToast(`Cobro de ${mapped.number} registrado en Supabase.`);
+    } else {
+      setIssuedInvoices((prev) =>
+        prev.map((inv) => (inv.id === invoiceId ? { ...inv, status: 'Cobrada' } : inv))
+      );
+      showToast('Cobro registrado correctamente.');
+    }
+  };
+
+  const handleConvertDocumentToInvoice = async (doc: IssuedInvoice) => {
+    if (isConfigured && organization) {
+      const matchedActivity = activities.find(
+        (a) => a.id === doc.activityId || a.name === doc.activity
+      );
+      const prefix = matchedActivity?.invoice_series_prefix || 'F';
+      const normalSeries = `${prefix}-2026`;
+      const row = await convertDraftDocumentToNormal(
+        doc.id,
+        organization.id,
+        normalSeries,
+        matchedActivity?.id
+      );
+      const mapped = invoiceRowToIssuedInvoice(row, activities);
+      setIssuedInvoices((prev) => [
+        mapped,
+        ...prev.map((inv) =>
+          inv.id === doc.id
+            ? {
+                ...inv,
+                status: (doc.documentType === 'albaran' ? 'Facturado' : 'Convertida') as IssuedInvoiceStatus,
+                convertedToInvoiceId: mapped.id,
+              }
+            : inv
+        ),
+      ]);
+      showToast(
+        `${doc.documentType === 'albaran' ? 'Albarán' : 'Proforma'} ${doc.number} convertido a Factura ${mapped.number} (VeriFactu).`
+      );
+    } else {
+      const numInfo = getNextInvoiceNumber(issuedInvoices, doc.activity, 'normal');
+
+      const newInvoice: IssuedInvoice = {
+        id: `inv-${Date.now()}`,
+        number: numInfo.number,
+        series: numInfo.series,
+        documentType: 'normal',
+        clientId: doc.clientId,
+        clientName: doc.clientName,
+        clientNif: doc.clientNif,
+        activity: doc.activity,
+        issueDate: REFERENCE_DATE,
+        dueDate: doc.dueDate || '2026-12-24',
+        lines: doc.lines.map((l, idx) => ({
+          ...l,
+          id: `line-${Date.now()}-${idx}`,
+        })),
+        ivaRate: doc.ivaRate,
+        irpfRate: doc.irpfRate,
+        status: 'Borrador',
+        veriFactuLocked: false,
+      };
+
+      const updatedStatus: IssuedInvoiceStatus =
+        doc.documentType === 'albaran' ? 'Facturado' : 'Convertida';
+
+      setIssuedInvoices((prev) => [
+        newInvoice,
+        ...prev.map((inv) =>
+          inv.id === doc.id
+            ? {
+                ...inv,
+                status: updatedStatus,
+                convertedToInvoiceId: newInvoice.id,
+              }
+            : inv
+        ),
+      ]);
+
+      if (doc.documentType === 'albaran') {
+        showToast(`Albarán ${doc.number} facturado. Se ha creado el borrador ${newInvoice.number}.`);
+      } else {
+        showToast(`Proforma ${doc.number} convertida. Se ha creado el borrador ${newInvoice.number}.`);
+      }
+    }
+  };
+
+  const handleDeleteInvoice = async (doc: IssuedInvoice) => {
+    if (isConfigured && organization) {
+      await deleteNonFiscalDocument(doc.id, organization.id);
+      setIssuedInvoices((prev) => prev.filter((inv) => inv.id !== doc.id));
+      showToast(`${doc.documentType === 'proforma' ? 'Proforma' : 'Albarán'} ${doc.number} eliminado.`);
+    } else {
+      setIssuedInvoices((prev) => prev.filter((inv) => inv.id !== doc.id));
+      showToast('Documento eliminado.');
+    }
+  };
+
+  const handleOpenRectificativa = (inv: IssuedInvoice) => {
+    setRectifyingInvoice(inv);
+    setInvoiceModal({ open: true, invoice: null });
+  };
+
+  const handleCloseInvoiceModal = () => {
+    setInvoiceModal({ open: false, invoice: null });
+    setRectifyingInvoice(null);
   };
 
   const handleSaveReceivedExpense = (expense: ReceivedInvoice) => {
@@ -731,10 +898,13 @@ function MainApp() {
         clients={clients}
         allIssuedInvoices={issuedInvoices}
         defaultActivity={defaultActivity}
-        onClose={() => setInvoiceModal({ open: false, invoice: null })}
+        initialRectifiedInvoice={rectifyingInvoice}
+        onClose={handleCloseInvoiceModal}
         onSaveInvoice={handleSaveInvoice}
         onMarkPaid={handleMarkInvoicePaid}
         onConvertToInvoice={handleConvertDocumentToInvoice}
+        onDeleteDocument={handleDeleteInvoice}
+        onEmitRectificativa={handleOpenRectificativa}
       />
 
       <AiExpenseModal

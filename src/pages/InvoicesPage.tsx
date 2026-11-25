@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Search,
@@ -8,6 +8,8 @@ import {
   Lock,
   CheckCircle2,
   Clock,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   ActivityFilter,
@@ -23,11 +25,16 @@ import {
   getReceivedInvoiceTotals,
   matchesActivity,
 } from '../utils/finance';
+import {
+  verifyInvoiceChain,
+  type MinimalVerifactuInvoice,
+  type ChainVerificationResult,
+} from '../utils/verifactu';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusBadge, VeriFactuBadge } from '../components/StatusBadge';
 
 export type InvoicesTab = 'emitidas' | 'recibidas';
-export type DocTypeFilter = 'all' | 'normal' | 'proforma' | 'albaran';
+export type DocTypeFilter = 'all' | 'normal' | 'proforma' | 'albaran' | 'rectificativa';
 
 interface InvoicesPageProps {
   activeTab: InvoicesTab;
@@ -48,9 +55,10 @@ const TAB_OPTIONS: { value: InvoicesTab; label: string }[] = [
 
 const DOC_TYPE_FILTER_OPTIONS: { value: DocTypeFilter; label: string }[] = [
   { value: 'all', label: 'Todos' },
-  { value: 'normal', label: 'Normales' },
+  { value: 'normal', label: 'Facturas' },
   { value: 'proforma', label: 'Proformas' },
   { value: 'albaran', label: 'Albaranes' },
+  { value: 'rectificativa', label: 'Rectificativas' },
 ];
 
 export function InvoicesPage({
@@ -67,6 +75,40 @@ export function InvoicesPage({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'Todas' | IssuedInvoiceStatus>('Todas');
   const [docTypeFilter, setDocTypeFilter] = useState<DocTypeFilter>('all');
+  const [chainStatus, setChainStatus] = useState<ChainVerificationResult | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const minimalInvoices: MinimalVerifactuInvoice[] = issuedInvoices.map((inv) => ({
+      id: inv.id,
+      invoice_number: inv.number,
+      series: inv.series,
+      sequence_number: inv.sequenceNumber ?? 0,
+      document_type: inv.documentType,
+      issue_date: inv.issueDate,
+      issuer_snapshot: inv.issuerSnapshot ?? {},
+      tax_base: inv.taxBase ?? 0,
+      vat_total: inv.vatTotal ?? 0,
+      total_amount: inv.totalAmount ?? 0,
+      verifactu_locked: inv.veriFactuLocked,
+      verifactu_hash: inv.veriFactuHash ?? null,
+      verifactu_prev_hash: inv.verifactuPrevHash ?? null,
+      verifactu_timestamp: inv.veriFactuTimestamp ?? null,
+      is_migrated: inv.isMigrated ?? false,
+    }));
+
+    verifyInvoiceChain(minimalInvoices)
+      .then((res) => {
+        if (active) setChainStatus(res);
+      })
+      .catch((err) => {
+        console.warn('Error al verificar cadena VeriFactu:', err);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [issuedInvoices]);
 
   const filteredIssued = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -109,7 +151,7 @@ export function InvoicesPage({
     for (const inv of filteredIssued) {
       if (inv.status === 'Borrador') continue;
       // Proformas and Albaranes have no fiscal validity, exclude from fiscal totals
-      if (inv.documentType && inv.documentType !== 'normal') continue;
+      if (inv.documentType === 'proforma' || inv.documentType === 'albaran') continue;
       const t = getIssuedInvoiceTotals(inv);
       totalBilled += t.total;
       if (inv.status === 'Pendiente') pendingAmount += t.total;
@@ -133,9 +175,24 @@ export function InvoicesPage({
       {/* Header + Segmented Control + Single Primary Action */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-[13px] font-medium text-[#6E6E73]">
-            {activityFilter} · Registro conforme a VeriFactu
-          </p>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <p className="text-[13px] font-medium text-[#6E6E73]">
+              {activityFilter} · Registro conforme a VeriFactu
+            </p>
+            {chainStatus && chainStatus.verifiedCount > 0 && (
+              chainStatus.isValid ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E8F8EE] px-2.5 py-0.5 text-[11px] font-medium text-[#1D7A3F]">
+                  <ShieldCheck className="h-3 w-3 shrink-0" />
+                  <span>Cadena VeriFactu íntegra ({chainStatus.verifiedCount})</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FDECEC] px-2.5 py-0.5 text-[11px] font-medium text-[#C92A2A]">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  <span>Alteración de cadena ({chainStatus.brokenInvoiceNumber || 'error'})</span>
+                </span>
+              )
+            )}
+          </div>
           <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.03em] text-[#1D1D1F] leading-tight">
             Facturas y Documentos
           </h1>
@@ -324,6 +381,7 @@ export function InvoicesPage({
                           </p>
                           <p className="text-[12px] text-[#6E6E73] mt-0.5">
                             {inv.activity}
+                            {docType === 'rectificativa' && ' · Factura Rectificativa'}
                             {docType === 'proforma' && ' · Proforma'}
                             {docType === 'albaran' && (!isValued ? ' · Albarán (Sin valorar)' : ' · Albarán')}
                           </p>
@@ -335,7 +393,9 @@ export function InvoicesPage({
                         </td>
 
                         {/* Base */}
-                        <td className="py-4 px-4 text-right text-[13px] tabular-nums text-[#6E6E73] whitespace-nowrap">
+                        <td className={`py-4 px-4 text-right text-[13px] tabular-nums whitespace-nowrap ${
+                          totals.baseImponible < 0 ? 'text-[#D32F2F] font-medium' : 'text-[#6E6E73]'
+                        }`}>
                           {docType === 'albaran' && !isValued ? (
                             <span className="text-[12px] text-[#86868B] italic">Sin valorar</span>
                           ) : (
@@ -344,7 +404,9 @@ export function InvoicesPage({
                         </td>
 
                         {/* Total */}
-                        <td className="py-4 px-4 text-right font-semibold tabular-nums text-[#1D1D1F] whitespace-nowrap">
+                        <td className={`py-4 px-4 text-right font-semibold tabular-nums whitespace-nowrap ${
+                          totals.total < 0 ? 'text-[#D32F2F]' : 'text-[#1D1D1F]'
+                        }`}>
                           {docType === 'albaran' && !isValued ? (
                             <span className="text-[12px] text-[#86868B] italic font-normal">Sin valorar</span>
                           ) : (
@@ -365,6 +427,11 @@ export function InvoicesPage({
                                 <span>Emitida</span>
                               </span>
                             )
+                          ) : docType === 'rectificativa' ? (
+                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-lg bg-[#FFF0F0] text-[#D32F2F] px-2.5 py-1 text-[12px] font-medium leading-none">
+                              <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+                              <span>Rectificativa</span>
+                            </span>
                           ) : docType === 'proforma' ? (
                             inv.status === 'Convertida' ? (
                               <span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 rounded-lg bg-black/[0.05] text-[#6E6E73] px-2.5 py-1 text-[12px] font-medium leading-none">
@@ -393,9 +460,9 @@ export function InvoicesPage({
                           )}
                         </td>
 
-                        {/* VeriFactu seal: Only shown for Factura Normal */}
+                        {/* VeriFactu seal: Shown for Normal and Rectificativa */}
                         <td className="py-4 px-4 whitespace-nowrap">
-                          {docType === 'normal' ? (
+                          {docType === 'normal' || docType === 'rectificativa' ? (
                             <VeriFactuBadge locked={inv.veriFactuLocked} />
                           ) : (
                             <span className="text-[12px] text-[#86868B] font-medium pl-2">—</span>

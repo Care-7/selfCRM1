@@ -47,7 +47,7 @@ export interface InvoiceLine {
   unitPrice: number;
 }
 
-export type DocumentType = 'normal' | 'proforma' | 'albaran';
+export type DocumentType = 'normal' | 'rectificativa' | 'proforma' | 'albaran';
 
 export type IssuedInvoiceStatus =
   | 'Cobrada'
@@ -60,12 +60,14 @@ export interface IssuedInvoice {
   id: string;
   number: string;
   series: 'CC' | 'AR' | 'PRO' | 'ALB' | string;
+  sequenceNumber?: number;
   documentType: DocumentType;
   isValued?: boolean;
   clientId: string;
   clientName: string;
   clientNif: string;
   activity: ActivityType;
+  activityId?: string;
   issueDate: string; // YYYY-MM-DD
   dueDate: string; // YYYY-MM-DD
   lines: InvoiceLine[];
@@ -74,8 +76,21 @@ export interface IssuedInvoice {
   status: IssuedInvoiceStatus;
   veriFactuLocked: boolean;
   veriFactuHash?: string;
+  verifactuPrevHash?: string;
   veriFactuTimestamp?: string;
+  verifactuQrUrl?: string;
+  verifactuStatus?: string;
+  isMigrated?: boolean;
+  convertedFromId?: string;
   convertedToInvoiceId?: string;
+  rectifiedInvoiceId?: string;
+  rectificationReason?: string;
+  issuerSnapshot?: Record<string, any>;
+  clientSnapshot?: Record<string, any>;
+  taxBase?: number;
+  vatTotal?: number;
+  irpfTotal?: number;
+  totalAmount?: number;
 }
 
 export type ReceivedInvoiceStatus = 'Contabilizada' | 'Pendiente';
