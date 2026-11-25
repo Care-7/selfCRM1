@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, ShieldCheck } from 'lucide-react';
+import { X, ShieldCheck, UploadCloud } from 'lucide-react';
 import type { TaxRegime, UserProfile } from '../types';
 
 interface SettingsModalProps {
@@ -7,6 +7,7 @@ interface SettingsModalProps {
   profile: UserProfile;
   onClose: () => void;
   onSaveProfile: (next: UserProfile) => void;
+  onOpenMigration?: () => void;
 }
 
 export function SettingsModal({
@@ -14,6 +15,7 @@ export function SettingsModal({
   profile,
   onClose,
   onSaveProfile,
+  onOpenMigration,
 }: SettingsModalProps) {
   const [fullName, setFullName] = useState(profile.fullName);
   const [nif, setNif] = useState(profile.nif);
@@ -177,6 +179,34 @@ export function SettingsModal({
                 className="mt-1 h-4 w-4 accent-[#0071E3]"
               />
             </div>
+
+            {onOpenMigration && (
+              <div className="rounded-2xl border border-black/[0.06] bg-[#F5F5F7]/70 p-4 flex items-center justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] text-[#0071E3]">
+                    <UploadCloud className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-semibold text-[#1D1D1F]">
+                      Asistente de migración
+                    </p>
+                    <p className="text-[12px] text-[#6E6E73] mt-0.5 leading-relaxed">
+                      Importa clientes, proveedores y facturas históricas desde Excel, Holded, Quipu o FacturaDirecta.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenMigration();
+                  }}
+                  className="shrink-0 rounded-xl bg-white px-3.5 py-2 text-[13px] font-medium text-[#1D1D1F] border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:bg-[#F5F5F7] transition-all"
+                >
+                  Importar datos
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-black/[0.05] bg-[#FBFBFD]">

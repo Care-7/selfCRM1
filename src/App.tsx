@@ -27,13 +27,29 @@ import { ContactSlideOver } from './components/ContactSlideOver';
 import { InvoiceEditorModal } from './components/InvoiceEditorModal';
 import { AiExpenseModal } from './components/AiExpenseModal';
 import { SettingsModal } from './components/SettingsModal';
+import { MigrationWizardModal } from './components/MigrationWizardModal';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { InvoicesPage, type InvoicesTab } from './pages/InvoicesPage';
 import { AccountingPage } from './pages/AccountingPage';
 import { TaxesPage } from './pages/TaxesPage';
+import { TenantProvider, useTenant } from './context/TenantContext';
+import { AuthPage } from './pages/AuthPage';
+import { OnboardingPage } from './pages/OnboardingPage';
+import { Loader2 } from 'lucide-react';
 
-export default function App() {
+function MainApp() {
+  const {
+    isConfigured,
+    session,
+    loading,
+    needsOnboarding,
+    organization,
+    activities,
+    profile,
+    signOut,
+  } = useTenant();
+
   const [activeSection, setActiveSection] = useState<NavSection>('inicio');
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('Todas las actividades');
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('quarter');
@@ -62,6 +78,7 @@ export default function App() {
 
   const [aiExpenseOpen, setAiExpenseOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [migrationModalOpen, setMigrationModalOpen] = useState(false);
 
   // Subtle confirmation feedback toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -160,11 +177,61 @@ export default function App() {
     showToast(`Gasto ${expense.number} contabilizado en el Libro Diario.`);
   };
 
+  const handleImportClients = (newClients: Contact[]) => {
+    setClients((prev) => [...newClients, ...prev]);
+    showToast(`${newClients.length} clientes importados correctamente.`);
+  };
+
+  const handleImportSuppliers = (newSuppliers: Contact[]) => {
+    setSuppliers((prev) => [...newSuppliers, ...prev]);
+    showToast(`${newSuppliers.length} proveedores importados correctamente.`);
+  };
+
+  const handleImportInvoices = (newInvoices: IssuedInvoice[]) => {
+    setIssuedInvoices((prev) => [...newInvoices, ...prev]);
+    showToast(`${newInvoices.length} facturas históricas importadas correctamente.`);
+  };
+
   const handleSaveProfile = (next: UserProfile) => {
     setUserProfile(next);
     setTaxRegime(next.regime);
     showToast('Ajustes fiscales actualizados.');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F5F5F7] flex flex-col items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#0071E3] mb-3" />
+        <p className="text-[13px] text-[#6E6E73] font-medium">Cargando espacio de trabajo...</p>
+      </div>
+    );
+  }
+
+  if (isConfigured && !session) {
+    return <AuthPage />;
+  }
+
+  if (isConfigured && session && needsOnboarding) {
+    return <OnboardingPage />;
+  }
+
+  const effectiveUserProfile: UserProfile = {
+    fullName: organization?.name || profile?.full_name || userProfile.fullName,
+    nif: organization?.tax_id || userProfile.nif,
+    roleLabel: organization?.legal_form === 'sl' ? 'Sociedad Limitada' : 'Autónomo',
+    email: profile?.email || session?.user?.email || userProfile.email,
+    address: userProfile.address,
+    regime: organization?.legal_form === 'sl' ? 'empresa' : 'autonomo',
+    veriFactuEnabled: userProfile.veriFactuEnabled,
+    avatarUrl: userProfile.avatarUrl,
+  };
+
+  const activityOptions: ActivityFilter[] = [
+    'Todas las actividades',
+    ...(activities.length > 0
+      ? activities.map((a) => a.name as ActivityFilter)
+      : ['Contabilidad Comunidades', 'Actividad Artística']),
+  ];
 
   return (
     <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F]">
@@ -196,8 +263,11 @@ export default function App() {
         onSelectSection={setActiveSection}
         activityFilter={activityFilter}
         onChangeActivity={setActivityFilter}
-        userProfile={userProfile}
+        activityOptions={activityOptions}
+        userProfile={effectiveUserProfile}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenMigration={() => setMigrationModalOpen(true)}
+        onSignOut={isConfigured && session ? signOut : undefined}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
       />
@@ -318,9 +388,19 @@ export default function App() {
 
       <SettingsModal
         isOpen={settingsOpen}
-        profile={userProfile}
+        profile={effectiveUserProfile}
         onClose={() => setSettingsOpen(false)}
         onSaveProfile={handleSaveProfile}
+        onOpenMigration={() => setMigrationModalOpen(true)}
+      />
+
+      <MigrationWizardModal
+        isOpen={migrationModalOpen}
+        onClose={() => setMigrationModalOpen(false)}
+        onImportClients={handleImportClients}
+        onImportSuppliers={handleImportSuppliers}
+        onImportInvoices={handleImportInvoices}
+        onNavigateSection={setActiveSection}
       />
 
       {/* Quiet Toast Feedback */}
@@ -335,5 +415,13 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <TenantProvider>
+      <MainApp />
+    </TenantProvider>
   );
 }

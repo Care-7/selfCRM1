@@ -10,6 +10,8 @@ import {
   ChevronDown,
   Layers,
   X,
+  UploadCloud,
+  LogOut,
 } from 'lucide-react';
 import type { ActivityFilter, NavSection, UserProfile } from '../types';
 
@@ -18,8 +20,11 @@ interface SidebarProps {
   onSelectSection: (section: NavSection) => void;
   activityFilter: ActivityFilter;
   onChangeActivity: (activity: ActivityFilter) => void;
+  activityOptions?: ActivityFilter[];
   userProfile: UserProfile;
   onOpenSettings: () => void;
+  onOpenMigration?: () => void;
+  onSignOut?: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -44,12 +49,19 @@ export function Sidebar({
   onSelectSection,
   activityFilter,
   onChangeActivity,
+  activityOptions,
   userProfile,
   onOpenSettings,
+  onOpenMigration,
+  onSignOut,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
   const [avatarFailed, setAvatarFailed] = useState(false);
+
+  const optionsToRender = activityOptions && activityOptions.length > 0
+    ? activityOptions
+    : ACTIVITY_OPTIONS;
 
   const initials = userProfile.fullName
     .split(' ')
@@ -113,7 +125,7 @@ export function Sidebar({
             onChange={(e) => onChangeActivity(e.target.value as ActivityFilter)}
             className="w-full appearance-none rounded-xl bg-white py-2.5 pl-9 pr-8 text-[13px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.05] transition-colors hover:border-black/[0.1] focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/20"
           >
-            {ACTIVITY_OPTIONS.map((option) => (
+            {optionsToRender.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
@@ -161,6 +173,19 @@ export function Sidebar({
 
       {/* Footer Profile & Settings */}
       <div className="mt-6 pt-4 border-t border-black/[0.05]">
+        {onOpenMigration && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenMigration();
+              onCloseMobile();
+            }}
+            className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-[13px] font-medium text-[#1D1D1F] border border-black/[0.05] shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition-all hover:bg-[#F5F5F7] hover:border-black/[0.08] active:scale-[0.98]"
+          >
+            <UploadCloud className="h-4 w-4 text-[#0071E3]" />
+            <span>Importar datos</span>
+          </button>
+        )}
         <div className="flex items-center justify-between gap-2 rounded-2xl bg-white p-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.04]">
           <div className="flex items-center gap-2.5 min-w-0">
             {!avatarFailed && userProfile.avatarUrl ? (
@@ -185,15 +210,28 @@ export function Sidebar({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            aria-label="Abrir ajustes fiscales y de perfil"
-            title="Ajustes"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#6E6E73] transition-colors hover:bg-[#F5F5F7] hover:text-[#1D1D1F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3]/40"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label="Abrir ajustes fiscales y de perfil"
+              title="Ajustes"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#6E6E73] transition-colors hover:bg-[#F5F5F7] hover:text-[#1D1D1F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3]/40"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                aria-label="Cerrar sesión"
+                title="Cerrar sesión"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#86868B] transition-colors hover:bg-[#FF3B30]/10 hover:text-[#D70015] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF3B30]/40"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

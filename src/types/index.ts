@@ -1,4 +1,4 @@
-export type ActivityType = 'Contabilidad Comunidades' | 'Actividad Artística';
+export type ActivityType = 'Contabilidad Comunidades' | 'Actividad Artística' | (string & {});
 export type ActivityFilter = 'Todas las actividades' | ActivityType;
 
 export type PeriodFilter = 'month' | 'quarter' | 'year';
