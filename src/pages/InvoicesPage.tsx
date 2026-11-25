@@ -11,7 +11,10 @@ import {
   ShieldCheck,
   AlertTriangle,
   FileCheck2,
+  Download,
+  Loader2,
 } from 'lucide-react';
+import { downloadInvoicePdf } from '../services/invoicePdfService';
 import type {
   ActivityFilter,
   DocumentType,
@@ -79,6 +82,17 @@ export function InvoicesPage({
   const [statusFilter, setStatusFilter] = useState<'Todas' | IssuedInvoiceStatus>('Todas');
   const [docTypeFilter, setDocTypeFilter] = useState<DocTypeFilter>('all');
   const [chainStatus, setChainStatus] = useState<ChainVerificationResult | null>(null);
+  const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<string | null>(null);
+
+  const handleQuickDownloadPdf = async (inv: IssuedInvoice) => {
+    try {
+      setDownloadingInvoiceId(inv.id);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      downloadInvoicePdf(inv);
+    } finally {
+      setDownloadingInvoiceId(null);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -472,45 +486,63 @@ export function InvoicesPage({
                           )}
                         </td>
 
-                        {/* Quick 1-Click Conversion Actions */}
+                        {/* Quick 1-Click Conversion Actions & Download PDF */}
                         <td className="py-4 px-4 whitespace-nowrap text-center">
-                          {docType === 'proforma' ? (
-                            inv.status !== 'Convertida' ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onConvertToInvoice?.(inv);
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0071E3]/[0.09] px-2.5 py-1 text-[12px] font-medium text-[#0071E3] hover:bg-[#0071E3]/[0.18] transition-colors"
-                                title="Crear Factura Normal en borrador a partir de esta proforma"
-                              >
-                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                                Convertir a Factura
-                              </button>
-                            ) : (
-                              <span className="text-[12px] text-[#86868B] font-medium">Convertida</span>
-                            )
-                          ) : docType === 'albaran' ? (
-                            inv.status !== 'Facturado' ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onConvertToInvoice?.(inv);
-                                }}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0071E3]/[0.09] px-2.5 py-1 text-[12px] font-medium text-[#0071E3] hover:bg-[#0071E3]/[0.18] transition-colors"
-                                title="Crear Factura Normal en borrador a partir de este albarán"
-                              >
-                                <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                                Facturar
-                              </button>
-                            ) : (
-                              <span className="text-[12px] text-[#86868B] font-medium">Facturado</span>
-                            )
-                          ) : (
-                            <span className="text-[12px] text-[#86868B]">—</span>
-                          )}
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleQuickDownloadPdf(inv);
+                              }}
+                              disabled={downloadingInvoiceId === inv.id}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#0071E3] bg-[#0071E3]/[0.08] hover:bg-[#0071E3]/[0.18] transition-colors disabled:opacity-50"
+                              title="Descargar PDF (1 clic)"
+                              aria-label={`Descargar PDF de ${inv.number}`}
+                            >
+                              {downloadingInvoiceId === inv.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+
+                            {docType === 'proforma' ? (
+                              inv.status !== 'Convertida' ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onConvertToInvoice?.(inv);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-[#0071E3]/[0.09] px-2 py-1 text-[11px] font-medium text-[#0071E3] hover:bg-[#0071E3]/[0.18] transition-colors"
+                                  title="Crear Factura Normal en borrador a partir de esta proforma"
+                                >
+                                  <FileText className="h-3 w-3" aria-hidden="true" />
+                                  Convertir
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-[#86868B] font-medium">Convertida</span>
+                              )
+                            ) : docType === 'albaran' ? (
+                              inv.status !== 'Facturado' ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onConvertToInvoice?.(inv);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-[#0071E3]/[0.09] px-2 py-1 text-[11px] font-medium text-[#0071E3] hover:bg-[#0071E3]/[0.18] transition-colors"
+                                  title="Crear Factura Normal en borrador a partir de este albarán"
+                                >
+                                  <FileText className="h-3 w-3" aria-hidden="true" />
+                                  Facturar
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-[#86868B] font-medium">Facturado</span>
+                              )
+                            ) : null}
+                          </div>
                         </td>
 
                         {/* Open Details Chevron */}

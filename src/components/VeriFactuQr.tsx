@@ -1,3 +1,5 @@
+import { generateQrMatrix } from '../utils/verifactu';
+
 interface VeriFactuQrProps {
   seed: string;
   size?: number;
@@ -9,45 +11,7 @@ interface VeriFactuQrProps {
  */
 export function VeriFactuQr({ seed, size = 108 }: VeriFactuQrProps) {
   const modules = 21;
-  const cells: boolean[][] = Array.from({ length: modules }, () =>
-    Array.from({ length: modules }, () => false)
-  );
-
-  const drawFinder = (startRow: number, startCol: number) => {
-    for (let r = 0; r < 7; r++) {
-      for (let c = 0; c < 7; c++) {
-        const isBorder = r === 0 || r === 6 || c === 0 || c === 6;
-        const isCenter = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-        cells[startRow + r][startCol + c] = isBorder || isCenter;
-      }
-    }
-  };
-
-  drawFinder(0, 0);
-  drawFinder(0, modules - 7);
-  drawFinder(modules - 7, 0);
-
-  // Deterministic pseudo-random fill for data modules
-  let state = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    state ^= seed.charCodeAt(i);
-    state = Math.imul(state, 16777619);
-  }
-
-  const inFinderZone = (r: number, c: number) =>
-    (r < 8 && c < 8) || (r < 8 && c >= modules - 8) || (r >= modules - 8 && c < 8);
-
-  for (let r = 0; r < modules; r++) {
-    for (let c = 0; c < modules; c++) {
-      if (inFinderZone(r, c)) continue;
-      if (r === 6 || c === 6) {
-        cells[r][c] = (r + c) % 2 === 0;
-        continue;
-      }
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-      cells[r][c] = (state & 0x7) < 4;
-    }
-  }
+  const cells = generateQrMatrix(seed);
 
   return (
     <svg

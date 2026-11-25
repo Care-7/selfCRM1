@@ -11,7 +11,9 @@ import {
   FileText,
   AlertCircle,
   Loader2,
+  Download,
 } from 'lucide-react';
+import { downloadInvoicePdf } from '../services/invoicePdfService';
 import type {
   ActivityType,
   Contact,
@@ -89,6 +91,7 @@ export function InvoiceEditorModal({
   const [rectificationReason, setRectificationReason] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -304,6 +307,23 @@ export function InvoiceEditorModal({
     }
   };
 
+  const handleDownloadPdf = async () => {
+    try {
+      setIsGeneratingPdf(true);
+      setErrorMsg('');
+      const targetInvoice = invoice || validateAndBuild(false);
+      if (!targetInvoice) return;
+
+      // Brief visual feedback for smooth UX
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      downloadInvoicePdf(targetInvoice);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error al generar o descargar el PDF de la factura.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
@@ -381,14 +401,32 @@ export function InvoiceEditorModal({
               )
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cerrar editor"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-[#6E6E73] transition-colors hover:bg-[#F5F5F7] hover:text-[#1D1D1F]"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {invoice && (
+              <button
+                type="button"
+                disabled={isGeneratingPdf}
+                onClick={handleDownloadPdf}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#F5F5F7] px-3 py-1.5 text-[13px] font-medium text-[#1D1D1F] transition-colors hover:bg-black/[0.06] disabled:opacity-50"
+                title="Descargar documento PDF"
+              >
+                {isGeneratingPdf ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5 text-[#0071E3]" />
+                )}
+                <span>Descargar PDF</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar editor"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-[#6E6E73] transition-colors hover:bg-[#F5F5F7] hover:text-[#1D1D1F]"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         {/* Two-column body: Editor + Status Preview */}
@@ -1018,10 +1056,19 @@ export function InvoiceEditorModal({
               {documentType === 'normal' || documentType === 'rectificativa' ? (
                 isLocked ? (
                   <>
+                    <button
+                      type="button"
+                      disabled={isSubmitting || isGeneratingPdf}
+                      onClick={handleDownloadPdf}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                    >
+                      {isGeneratingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Descargar PDF
+                    </button>
                     {invoice?.status === 'Pendiente' && (
                       <button
                         type="button"
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || isGeneratingPdf}
                         onClick={async () => {
                           try {
                             setIsSubmitting(true);
@@ -1034,16 +1081,16 @@ export function InvoiceEditorModal({
                             setIsSubmitting(false);
                           }
                         }}
-                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.08] px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-colors hover:bg-black/[0.03] disabled:opacity-50"
                       >
-                        {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                        {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4 text-[#1D7A3F]" />}
                         Marcar como cobrada
                       </button>
                     )}
                     {documentType === 'normal' && onEmitRectificativa && invoice && (
                       <button
                         type="button"
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || isGeneratingPdf}
                         onClick={() => {
                           onEmitRectificativa(invoice);
                           onClose();
@@ -1086,6 +1133,17 @@ export function InvoiceEditorModal({
                 )
               ) : documentType === 'proforma' ? (
                 <>
+                  {invoice && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting || isGeneratingPdf}
+                      onClick={handleDownloadPdf}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                    >
+                      {isGeneratingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Descargar Proforma (PDF)
+                    </button>
+                  )}
                   {invoice && invoice.status !== 'Convertida' && onConvertToInvoice && (
                     <button
                       type="button"
@@ -1102,7 +1160,7 @@ export function InvoiceEditorModal({
                           setIsSubmitting(false);
                         }
                       }}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.08] px-4 py-2.5 text-[14px] font-medium text-[#0071E3] shadow-[0_1px_2px_rgba(0,113,227,0.1)] transition-colors hover:bg-[#0071E3]/[0.06] disabled:opacity-50"
                     >
                       {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                       Convertir a Factura
@@ -1143,6 +1201,17 @@ export function InvoiceEditorModal({
                 </>
               ) : (
                 <>
+                  {invoice && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting || isGeneratingPdf}
+                      onClick={handleDownloadPdf}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                    >
+                      {isGeneratingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Descargar Albarán (PDF)
+                    </button>
+                  )}
                   {invoice && invoice.status !== 'Facturado' && onConvertToInvoice && (
                     <button
                       type="button"
@@ -1159,7 +1228,7 @@ export function InvoiceEditorModal({
                           setIsSubmitting(false);
                         }
                       }}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.08] px-4 py-2.5 text-[14px] font-medium text-[#0071E3] shadow-[0_1px_2px_rgba(0,113,227,0.1)] transition-colors hover:bg-[#0077ED]/[0.06] disabled:opacity-50"
                     >
                       {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                       Facturar albarán
