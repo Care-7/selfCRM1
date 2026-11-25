@@ -2,11 +2,10 @@ name: Supabase Migrations
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'supabase/migrations/**'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   deploy-migrations:
