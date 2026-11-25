@@ -29,30 +29,69 @@ export function invoiceRowToIssuedInvoice(
   const activityName =
     matchedActivity?.name || (activities[0]?.name ?? 'Actividad Principal');
 
-  // Map database lines to UI InvoiceLine array
-  const rawLines = Array.isArray(row.lines) ? row.lines : [];
+  // Map database lines safely (handling potential string or null jsonb)
+  let rawLines: any[] = [];
+  if (Array.isArray(row.lines)) {
+    rawLines = row.lines;
+  } else if (typeof row.lines === 'string') {
+    try {
+      const parsed = JSON.parse(row.lines);
+      if (Array.isArray(parsed)) rawLines = parsed;
+    } catch {
+      rawLines = [];
+    }
+  }
+
   const lines: InvoiceLine[] = rawLines.map((l: any, idx: number) => ({
-    id: l.id || `line-${row.id}-${idx}`,
-    description: l.description || '',
-    quantity: Number(l.quantity ?? 1),
-    unitPrice: Number(l.unit_price ?? 0),
+    id: l?.id || `line-${row.id || 'new'}-${idx}`,
+    description: l?.description || '',
+    quantity: Number(l?.quantity ?? 1),
+    unitPrice: Number(l?.unit_price ?? 0),
   }));
+
+  // Safely parse client_snapshot and issuer_snapshot if passed as JSON string
+  let clientSnapshot: ClientSnapshot | null = null;
+  if (row.client_snapshot && typeof row.client_snapshot === 'object') {
+    clientSnapshot = row.client_snapshot as ClientSnapshot;
+  } else if (typeof row.client_snapshot === 'string') {
+    try {
+      clientSnapshot = JSON.parse(row.client_snapshot);
+    } catch {
+      clientSnapshot = null;
+    }
+  }
+
+  let issuerSnapshot: IssuerSnapshot | null = null;
+  if (row.issuer_snapshot && typeof row.issuer_snapshot === 'object') {
+    issuerSnapshot = row.issuer_snapshot as IssuerSnapshot;
+  } else if (typeof row.issuer_snapshot === 'string') {
+    try {
+      issuerSnapshot = JSON.parse(row.issuer_snapshot);
+    } catch {
+      issuerSnapshot = null;
+    }
+  }
+
+  const taxBase = Number(row.tax_base ?? 0);
+  const vatTotal = Number(row.vat_total ?? 0);
+  const irpfTotal = Number(row.irpf_total ?? 0);
+  const totalAmount = Number(row.total_amount ?? 0);
 
   // Derive predominant tax rates from lines or totals
   const firstLine = rawLines[0];
   const ivaRate = (
     firstLine?.vat_rate != null
       ? Number(firstLine.vat_rate)
-      : row.tax_base > 0
-      ? Math.round((Number(row.vat_total) / Number(row.tax_base)) * 100)
+      : taxBase > 0
+      ? Math.round((vatTotal / taxBase) * 100)
       : 21
   ) as 21 | 10 | 0;
 
   const irpfRate = (
     firstLine?.irpf_rate != null
       ? Number(firstLine.irpf_rate)
-      : row.tax_base > 0
-      ? Math.round((Number(row.irpf_total) / Number(row.tax_base)) * 100)
+      : taxBase > 0
+      ? Math.round((irpfTotal / taxBase) * 100)
       : 0
   ) as IrpfRate;
 
@@ -73,11 +112,11 @@ export function invoiceRowToIssuedInvoice(
     number: row.invoice_number,
     series: row.series,
     sequenceNumber: row.sequence_number,
-    documentType: row.document_type as DocumentType,
+    documentType: (row.document_type || 'normal') as DocumentType,
     isValued: true,
     clientId: row.client_id || '',
-    clientName: row.client_snapshot?.name || 'Cliente sin nombre',
-    clientNif: row.client_snapshot?.tax_id || '',
+    clientName: clientSnapshot?.name || 'Cliente sin nombre',
+    clientNif: clientSnapshot?.tax_id || '',
     activity: activityName as ActivityType,
     activityId: row.activity_id || undefined,
     issueDate: row.issue_date,
@@ -96,14 +135,16 @@ export function invoiceRowToIssuedInvoice(
     convertedFromId: row.converted_from_id || undefined,
     rectifiedInvoiceId: row.rectified_invoice_id || undefined,
     rectificationReason: row.rectification_reason || undefined,
-    issuerSnapshot: row.issuer_snapshot,
-    clientSnapshot: row.client_snapshot,
-    taxBase: Number(row.tax_base),
-    vatTotal: Number(row.vat_total),
-    irpfTotal: Number(row.irpf_total),
-    totalAmount: Number(row.total_amount),
+    issuerSnapshot: issuerSnapshot || undefined,
+    clientSnapshot: clientSnapshot || undefined,
+    taxBase,
+    vatTotal,
+    irpfTotal,
+    totalAmount,
   };
 }
+
+export { invoiceRowToIssuedInvoice as mapRowToIssuedInvoice };
 
 /**
  * Creates an immutable snapshot of issuer fiscal details for an invoice.

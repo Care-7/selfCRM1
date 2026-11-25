@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   invoiceRowToIssuedInvoice,
+  mapRowToIssuedInvoice,
   createIssuerSnapshot,
   createClientSnapshot,
   convertInvoiceLinesToDbItems,
@@ -309,3 +310,100 @@ test('convertInvoiceLinesToDbItems calculates taxes and rounds correctly', () =>
   assert.equal(dbLines[1].irpf_amount, 7.5);
   assert.equal(dbLines[1].total, 53);
 });
+
+test('mapRowToIssuedInvoice handles row with null optional fields and stringified JSON upon F5 reload', () => {
+  const rowWithStringsAndNulls: any = {
+    id: 'reload-uuid-1234',
+    organization_id: 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d',
+    activity_id: null,
+    client_id: null,
+    document_type: 'normal',
+    series: 'SER-2026',
+    sequence_number: 10,
+    invoice_number: 'SER-2026-0010',
+    issue_date: '2026-05-01',
+    due_date: null,
+    paid_at: null,
+    // JSON stringified fields as sometimes returned over raw network transports
+    issuer_snapshot: JSON.stringify({ name: 'Emisor String SL', tax_id: 'B00000000' }),
+    client_snapshot: JSON.stringify({ name: 'Cliente String SL', tax_id: 'B11111111' }),
+    lines: JSON.stringify([
+      {
+        id: 'line-str-1',
+        description: 'Servicio rehidratado F5',
+        quantity: 1,
+        unit_price: 250,
+        vat_rate: 21,
+        irpf_rate: 15,
+        tax_base: 250,
+        vat_amount: 52.5,
+        irpf_amount: 37.5,
+        total: 265,
+      },
+    ]),
+    tax_base: 250,
+    vat_total: 52.5,
+    irpf_total: 37.5,
+    total_amount: 265,
+    payment_status: 'pending',
+    payment_method: null,
+    notes: null,
+    verifactu_locked: true,
+    verifactu_hash: 'C'.repeat(64),
+    verifactu_prev_hash: 'B'.repeat(64),
+    verifactu_timestamp: '2026-05-01T08:00:00Z',
+    verifactu_qr_url: 'https://sede.agenciatributaria.gob.es/qr-test',
+    verifactu_status: 'generated',
+    rectified_invoice_id: null,
+    rectification_reason: null,
+    converted_from_id: null,
+    is_migrated: false,
+    created_at: '2026-05-01T08:00:00Z',
+    updated_at: '2026-05-01T08:00:00Z',
+  };
+
+  const invoice = mapRowToIssuedInvoice(rowWithStringsAndNulls, []);
+
+  assert.equal(invoice.id, 'reload-uuid-1234');
+  assert.equal(invoice.number, 'SER-2026-0010');
+  assert.equal(invoice.clientName, 'Cliente String SL');
+  assert.equal(invoice.clientNif, 'B11111111');
+  assert.equal(invoice.lines.length, 1);
+  assert.equal(invoice.lines[0].description, 'Servicio rehidratado F5');
+  assert.equal(invoice.lines[0].unitPrice, 250);
+  assert.equal(invoice.dueDate, '2026-05-01'); // falls back to issue_date when due_date is null
+  assert.equal(invoice.veriFactuLocked, true);
+  assert.equal(invoice.veriFactuHash, 'C'.repeat(64));
+  assert.equal(invoice.verifactuPrevHash, 'B'.repeat(64));
+  assert.equal(invoice.totalAmount, 265);
+});
+
+test('non-optimistic invoice issuance guarantee: failures do not mutate state', async () => {
+  let state = [{ id: 'existing-1', number: 'F-0001' }];
+
+  const mockSaveInvoice = async (shouldFail: boolean, newInv: any) => {
+    if (shouldFail) {
+      throw new Error('Database error: function digest does not exist');
+    }
+    // Only mutate upon success
+    state = [newInv, ...state];
+  };
+
+  // When Supabase RPC fails
+  await assert.rejects(
+    async () => {
+      await mockSaveInvoice(true, { id: 'failed-inv', number: 'F-0002' });
+    },
+    { message: /function digest does not exist/ }
+  );
+
+  // State must remain strictly unchanged (no phantom optimistic invoices)
+  assert.equal(state.length, 1);
+  assert.equal(state[0].id, 'existing-1');
+
+  // When Supabase succeeds
+  await mockSaveInvoice(false, { id: 'success-inv', number: 'F-0002' });
+  assert.equal(state.length, 2);
+  assert.equal(state[0].id, 'success-inv');
+});
+

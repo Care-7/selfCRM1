@@ -8,7 +8,7 @@
 -- ==============================================================================
 
 -- 1. Enable pgcrypto for native cryptographic digest (SHA-256)
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 -- 2. Table: public.issued_invoices
 CREATE TABLE IF NOT EXISTS public.issued_invoices (
@@ -226,8 +226,8 @@ BEGIN
                    '&HuellaAnterior=' || v_prev_hash ||
                    '&FechaHoraHusoGenRegistro=' || v_ts_iso;
 
-    -- SHA-256 uppercase digest
-    v_hash := UPPER(encode(digest(v_canonical, 'sha256'), 'hex'));
+    -- SHA-256 uppercase digest using extensions.digest on bytea
+    v_hash := UPPER(encode(extensions.digest(convert_to(v_canonical, 'UTF8'), 'sha256'), 'hex'));
 
     -- Official AEAT verification QR URL
     v_qr_url := 'https://sede.agenciatributaria.gob.es/Sede/procedimientoini/ZZ01.shtml?nif=' ||
