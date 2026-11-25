@@ -53,6 +53,17 @@ CREATE INDEX IF NOT EXISTS idx_received_invoices_activity
 CREATE INDEX IF NOT EXISTS idx_received_invoices_supplier
   ON public.received_invoices(supplier_id);
 
+-- Helper trigger function to maintain updated_at timestamps
+CREATE OR REPLACE FUNCTION public.set_timestamp()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
 -- Automatic timestamp trigger
 DROP TRIGGER IF EXISTS trg_received_invoices_updated_at ON public.received_invoices;
 CREATE TRIGGER trg_received_invoices_updated_at
