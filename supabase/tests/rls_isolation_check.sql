@@ -391,6 +391,109 @@ BEGIN
 END;
 $$;
 
+-- ------------------------------------------------------------------------------
+-- 8. Test: Issued Invoices Isolation & VeriFactu Immutability Trigger
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_user_a uuid := '11111111-1111-1111-1111-111111111111'::uuid;
+  v_user_b uuid := '22222222-2222-2222-2222-222222222222'::uuid;
+  v_org_a_id uuid := current_setting('test.org_a_id')::uuid;
+  v_org_b_id uuid := current_setting('test.org_b_id')::uuid;
+  v_inv_a public.issued_invoices;
+  v_count integer;
+  v_threw_delete boolean := false;
+  v_threw_update boolean := false;
+BEGIN
+  -- 8.1 User A issues a normal invoice via issue_invoice_atomic
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  v_inv_a := public.issue_invoice_atomic(
+    p_organization_id := v_org_a_id,
+    p_series := 'CC',
+    p_document_type := 'normal',
+    p_issuer_snapshot := '{"name": "Comunidades García", "tax_id": "12345678Z"}'::jsonb,
+    p_client_snapshot := '{"name": "Comunidad Centro", "tax_id": "H28192847"}'::jsonb,
+    p_lines := '[{"description": "Honorarios administración", "quantity": 1, "unit_price": 500, "vat_rate": 21, "irpf_rate": 15, "total": 530}]'::jsonb,
+    p_tax_base := 500.00,
+    p_vat_total := 105.00,
+    p_irpf_total := 75.00,
+    p_total_amount := 530.00,
+    p_issue_date := CURRENT_DATE
+  );
+
+  IF v_inv_a.invoice_number <> 'CC-0001' THEN
+    RAISE EXCEPTION 'TEST 8.1 FAILED: Invoice number expected CC-0001, got %', v_inv_a.invoice_number;
+  END IF;
+
+  IF v_inv_a.verifactu_locked <> true OR v_inv_a.verifactu_hash IS NULL THEN
+    RAISE EXCEPTION 'TEST 8.1 FAILED: VeriFactu hash should be generated and locked.';
+  END IF;
+
+  -- 8.2 User B cannot see User A's issued invoice
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text)::text, true);
+
+  SELECT count(*) INTO v_count FROM public.issued_invoices WHERE id = v_inv_a.id;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'TEST 8.2 FAILED (SECURITY BREACH): User B read User A issued invoice!';
+  END IF;
+
+  -- 8.3 Switch back to User A and test VeriFactu Immutability: DELETE attempt must fail
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  BEGIN
+    DELETE FROM public.issued_invoices WHERE id = v_inv_a.id;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%VERIFACTU_IMMUTABLE%' THEN
+      v_threw_delete := true;
+    ELSE
+      RAISE EXCEPTION 'TEST 8.3 FAILED: Unexpected error on DELETE: %', SQLERRM;
+    END IF;
+  END;
+
+  IF NOT v_threw_delete THEN
+    RAISE EXCEPTION 'TEST 8.3 FAILED: Deleting locked VeriFactu invoice did not trigger exception!';
+  END IF;
+
+  -- 8.4 Test VeriFactu Immutability: Modifying tax_base/totals must fail
+  BEGIN
+    UPDATE public.issued_invoices
+    SET tax_base = 999.00
+    WHERE id = v_inv_a.id;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '%VERIFACTU_IMMUTABLE%' THEN
+      v_threw_update := true;
+    ELSE
+      RAISE EXCEPTION 'TEST 8.4 FAILED: Unexpected error on UPDATE: %', SQLERRM;
+    END IF;
+  END;
+
+  IF NOT v_threw_update THEN
+    RAISE EXCEPTION 'TEST 8.4 FAILED: Altering fiscal content on locked invoice did not trigger exception!';
+  END IF;
+
+  -- 8.5 Test permitted UPDATE: Updating payment_status to paid succeeds
+  UPDATE public.issued_invoices
+  SET payment_status = 'paid', paid_at = now()
+  WHERE id = v_inv_a.id;
+
+  SELECT count(*) INTO v_count
+  FROM public.issued_invoices
+  WHERE id = v_inv_a.id AND payment_status = 'paid';
+
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 8.5 FAILED: Expected payment_status to be updated to paid.';
+  END IF;
+
+  RAISE NOTICE '[PASS] Test 8: Issued invoices RLS isolation and VeriFactu immutability validated.';
+  RESET ROLE;
+END;
+$$;
+
 DO $$
 BEGIN
   RAISE NOTICE '------------------------------------------------------------';

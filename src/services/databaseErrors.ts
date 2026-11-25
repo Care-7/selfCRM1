@@ -24,12 +24,17 @@ export function isValidUuid(str?: string | null): boolean {
  */
 export function mapDatabaseError(
   error: unknown,
-  entity: 'cliente' | 'proveedor' | 'registro' = 'registro'
+  entity: 'cliente' | 'proveedor' | 'factura' | 'registro' = 'registro'
 ): string {
   if (!error) return 'Error desconocido al procesar la operación.';
 
   const err = error as { code?: string; message?: string; details?: string };
+  const message = err.message || '';
   const code = err.code;
+
+  if (message.includes('VERIFACTU_IMMUTABLE')) {
+    return 'Inmutabilidad VeriFactu (RD 1007/2023): Las facturas emitidas y selladas no pueden eliminarse ni modificarse fiscalmente. Debe emitir una factura rectificativa.';
+  }
 
   if (code === '23505') {
     return `Ya existe un ${entity} con este NIF/CIF en tu organización.`;

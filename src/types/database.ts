@@ -205,6 +205,18 @@ export interface Database {
         Update: Partial<SupplierRow>;
         Relationships: [];
       };
+      issued_invoices: {
+        Row: IssuedInvoiceRow;
+        Insert: Partial<IssuedInvoiceRow> & {
+          organization_id: string;
+          series: string;
+          invoice_number: string;
+          document_type: IssuedInvoiceDocumentType;
+          lines: Json;
+        };
+        Update: Partial<IssuedInvoiceRow>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -220,8 +232,107 @@ export interface Database {
         Args: Record<string, unknown>;
         Returns: string;
       };
+      issue_invoice_atomic: {
+        Args: Record<string, unknown>;
+        Returns: IssuedInvoiceRow;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };
 }
+
+export type IssuedInvoiceDocumentType = 'normal' | 'rectificativa' | 'proforma' | 'albaran';
+export type IssuedInvoicePaymentStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
+export type VerifactuStatus = 'not_applicable' | 'generated' | 'sent' | 'accepted' | 'rejected';
+
+export interface InvoiceLineItem {
+  id?: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  discount_rate?: number;
+  vat_rate: number;
+  irpf_rate: number;
+  tax_base: number;
+  vat_amount: number;
+  irpf_amount: number;
+  total: number;
+}
+
+export interface IssuerSnapshot {
+  name: string;
+  tax_id: string;
+  legal_form?: string;
+  address?: string;
+  email?: string;
+}
+
+export interface ClientSnapshot {
+  name: string;
+  tax_id: string;
+  address?: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface IssuedInvoiceRow {
+  id: string;
+  organization_id: string;
+  activity_id: string | null;
+  client_id: string | null;
+  document_type: IssuedInvoiceDocumentType;
+  series: string;
+  sequence_number: number;
+  invoice_number: string;
+  issue_date: string;
+  due_date: string | null;
+  issuer_snapshot: IssuerSnapshot;
+  client_snapshot: ClientSnapshot;
+  lines: InvoiceLineItem[];
+  tax_base: number;
+  vat_total: number;
+  irpf_total: number;
+  total_amount: number;
+  payment_status: IssuedInvoicePaymentStatus;
+  paid_at: string | null;
+  payment_method: string | null;
+  notes: string | null;
+  rectified_invoice_id: string | null;
+  rectification_reason: string | null;
+  converted_from_id: string | null;
+  is_migrated: boolean;
+  verifactu_locked: boolean;
+  verifactu_hash: string | null;
+  verifactu_prev_hash: string | null;
+  verifactu_timestamp: string | null;
+  verifactu_qr_url: string | null;
+  verifactu_status: VerifactuStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IssueInvoiceAtomicInput {
+  organization_id: string;
+  series: string;
+  document_type: IssuedInvoiceDocumentType;
+  issuer_snapshot: IssuerSnapshot;
+  client_snapshot: ClientSnapshot;
+  lines: InvoiceLineItem[];
+  tax_base: number;
+  vat_total: number;
+  irpf_total: number;
+  total_amount: number;
+  activity_id?: string | null;
+  client_id?: string | null;
+  issue_date?: string;
+  due_date?: string | null;
+  payment_status?: IssuedInvoicePaymentStatus;
+  payment_method?: string | null;
+  notes?: string | null;
+  rectified_invoice_id?: string | null;
+  rectification_reason?: string | null;
+  converted_from_id?: string | null;
+  is_migrated?: boolean;
+}
+
