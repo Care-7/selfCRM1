@@ -20,6 +20,7 @@ import type {
   DocumentType,
   InvoiceLine,
   IrpfRate,
+  IvaRate,
   IssuedInvoice,
 } from '../types';
 import {
@@ -84,7 +85,7 @@ export function InvoiceEditorModal({
   const [activity, setActivity] = useState<ActivityType>(defaultActivity);
   const [issueDate, setIssueDate] = useState(REFERENCE_DATE);
   const [dueDate, setDueDate] = useState('2026-12-24');
-  const [ivaRate, setIvaRate] = useState<21 | 10 | 0>(21);
+  const [ivaRate, setIvaRate] = useState<IvaRate>(21);
   const [irpfRate, setIrpfRate] = useState<IrpfRate>(15);
   const [lines, setLines] = useState<InvoiceLine[]>([]);
   const [rectifiedInvoiceId, setRectifiedInvoiceId] = useState<string>('');

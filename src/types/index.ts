@@ -71,7 +71,7 @@ export interface IssuedInvoice {
   issueDate: string; // YYYY-MM-DD
   dueDate: string; // YYYY-MM-DD
   lines: InvoiceLine[];
-  ivaRate: 21 | 10 | 0;
+  ivaRate: IvaRate;
   irpfRate: IrpfRate;
   status: IssuedInvoiceStatus;
   veriFactuLocked: boolean;
