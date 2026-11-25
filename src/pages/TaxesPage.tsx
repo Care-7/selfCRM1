@@ -10,6 +10,8 @@ import type {
 import { calculateTaxSummary, formatCurrency, formatDecimalES } from '../utils/finance';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusBadge } from '../components/StatusBadge';
+import { CashflowTaxForecastCard } from '../components/CashflowTaxForecastCard';
+import { AeatBooksExportCard } from '../components/AeatBooksExportCard';
 
 interface TaxesPageProps {
   issuedInvoices: IssuedInvoice[];
@@ -86,6 +88,14 @@ export function TaxesPage({
           />
         </div>
       </div>
+
+      {/* Cashflow & Tax Reserve Forecast Card */}
+      <CashflowTaxForecastCard
+        issuedInvoices={issuedInvoices}
+        receivedInvoices={receivedInvoices}
+        activityFilter={activityFilter}
+        defaultQuarter={(quarter.replace('T', '') + 'T') as any}
+      />
 
       {/* Main 3 Tax Model Cards */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3 items-stretch">
@@ -359,6 +369,13 @@ export function TaxesPage({
           </div>
         </section>
       </div>
+
+      {/* AEAT Official Books Export Card */}
+      <AeatBooksExportCard
+        issuedInvoices={issuedInvoices}
+        receivedInvoices={receivedInvoices}
+        activityFilter={activityFilter}
+      />
 
       {/* Fiscal Calendar Summary Surface */}
       <section className="rounded-2xl bg-white p-6 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">

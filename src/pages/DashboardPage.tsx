@@ -31,6 +31,7 @@ import {
 import { REFERENCE_DATE } from '../data/mockData';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusBadge, VeriFactuBadge } from '../components/StatusBadge';
+import { CashflowTaxForecastCard } from '../components/CashflowTaxForecastCard';
 
 interface DashboardPageProps {
   issuedInvoices: IssuedInvoice[];
@@ -331,6 +332,13 @@ export function DashboardPage({
           </ResponsiveContainer>
         </div>
       </section>
+
+      {/* Cashflow & Tax Reserve Forecast Card */}
+      <CashflowTaxForecastCard
+        issuedInvoices={issuedInvoices}
+        receivedInvoices={receivedInvoices}
+        activityFilter={activityFilter}
+      />
 
       {/* Lower Two-Column Grid: Próximas obligaciones fiscales + Últimas facturas */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
