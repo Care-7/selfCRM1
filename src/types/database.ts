@@ -77,6 +77,92 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+export interface ClientRow {
+  id: string;
+  organization_id: string;
+  activity_id: string | null;
+  name: string;
+  tax_id: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  postal_code: string | null;
+  country: string;
+  default_vat_rate: number;
+  default_irpf_rate: number;
+  payment_terms: string | null;
+  iban: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierRow {
+  id: string;
+  organization_id: string;
+  activity_id: string | null;
+  name: string;
+  tax_id: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  postal_code: string | null;
+  country: string;
+  default_vat_rate: number;
+  default_irpf_rate: number;
+  default_expense_category: string | null;
+  iban: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateClientInput {
+  organization_id: string;
+  activity_id?: string | null;
+  name: string;
+  tax_id: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  country?: string;
+  default_vat_rate?: number;
+  default_irpf_rate?: number;
+  payment_terms?: string | null;
+  iban?: string | null;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export type UpdateClientInput = Partial<Omit<CreateClientInput, 'organization_id'>>;
+
+export interface CreateSupplierInput {
+  organization_id: string;
+  activity_id?: string | null;
+  name: string;
+  tax_id: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  country?: string;
+  default_vat_rate?: number;
+  default_irpf_rate?: number;
+  default_expense_category?: string | null;
+  iban?: string | null;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export type UpdateSupplierInput = Partial<Omit<CreateSupplierInput, 'organization_id'>>;
+
 /**
  * Supabase Generic Database Schema mapping for type-safe client usage.
  */
@@ -105,6 +191,18 @@ export interface Database {
         Row: BusinessActivity;
         Insert: Partial<BusinessActivity> & { organization_id: string; name: string; invoice_series_prefix: string };
         Update: Partial<BusinessActivity>;
+        Relationships: [];
+      };
+      clients: {
+        Row: ClientRow;
+        Insert: Partial<ClientRow> & { organization_id: string; name: string; tax_id: string };
+        Update: Partial<ClientRow>;
+        Relationships: [];
+      };
+      suppliers: {
+        Row: SupplierRow;
+        Insert: Partial<SupplierRow> & { organization_id: string; name: string; tax_id: string };
+        Update: Partial<SupplierRow>;
         Relationships: [];
       };
     };

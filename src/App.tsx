@@ -37,6 +37,24 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthPage } from './pages/AuthPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { Loader2 } from 'lucide-react';
+import {
+  listClients,
+  createClient,
+  updateClient,
+  deleteClient,
+  archiveClient,
+} from './services/clientsService';
+import {
+  listSuppliers,
+  createSupplier,
+  updateSupplier,
+  deleteSupplier,
+  archiveSupplier,
+} from './services/suppliersService';
+import {
+  clientRowToContact,
+  supplierRowToContact,
+} from './services/contactMappers';
 
 function MainApp() {
   const {
@@ -92,6 +110,9 @@ function MainApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
 
+  // Subtle loading state for Supabase contacts
+  const [isContactsLoading, setIsContactsLoading] = useState(false);
+
   // Subtle confirmation feedback toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -102,23 +123,179 @@ function MainApp() {
     }, 3400);
   };
 
+  // Load real clients and suppliers from Supabase when organization is active
+  useEffect(() => {
+    if (isConfigured && session && organization?.id) {
+      let isMounted = true;
+      setIsContactsLoading(true);
+
+      Promise.all([
+        listClients(organization.id),
+        listSuppliers(organization.id),
+      ])
+        .then(([clientsRows, suppliersRows]) => {
+          if (!isMounted) return;
+          setClients(clientsRows.map((r) => clientRowToContact(r, activities)));
+          setSuppliers(suppliersRows.map((r) => supplierRowToContact(r, activities)));
+        })
+        .catch((err) => {
+          console.error('Error al sincronizar contactos:', err);
+          showToast('No se pudieron sincronizar los contactos de Supabase.');
+        })
+        .finally(() => {
+          if (isMounted) setIsContactsLoading(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [isConfigured, session, organization?.id, activities]);
+
   const defaultActivity: ActivityType =
     activityFilter === 'Todas las actividades'
       ? (activities[0]?.name || (isDemo ? 'Contabilidad Comunidades' : 'Actividad Principal'))
       : activityFilter;
 
-  const handleSaveContact = (saved: Contact, isNew: boolean) => {
-    if (saved.kind === 'cliente') {
-      setClients((prev) =>
-        isNew ? [saved, ...prev] : prev.map((c) => (c.id === saved.id ? saved : c))
-      );
-      showToast(isNew ? `Cliente «${saved.name}» añadido.` : `Ficha de «${saved.name}» actualizada.`);
+  const handleSaveContact = async (saved: Contact, isNew: boolean) => {
+    if (isConfigured && session && organization?.id) {
+      const targetActivityId =
+        saved.activityId ||
+        activities.find((a) => a.name === saved.activity)?.id ||
+        null;
+
+      if (saved.kind === 'cliente') {
+        if (isNew) {
+          const row = await createClient({
+            organization_id: organization.id,
+            activity_id: targetActivityId,
+            name: saved.name,
+            tax_id: saved.nif,
+            email: saved.email || null,
+            phone: saved.phone || null,
+            address: saved.address || null,
+            default_vat_rate: saved.defaultIva,
+            default_irpf_rate: saved.defaultIrpf,
+            notes: saved.notes || null,
+            is_active: saved.status === 'Activo',
+          });
+          const mapped = clientRowToContact(row, activities);
+          setClients((prev) => [mapped, ...prev]);
+          showToast(`Cliente «${mapped.name}» registrado en Supabase.`);
+        } else {
+          const row = await updateClient(saved.id, organization.id, {
+            activity_id: targetActivityId,
+            name: saved.name,
+            tax_id: saved.nif,
+            email: saved.email || null,
+            phone: saved.phone || null,
+            address: saved.address || null,
+            default_vat_rate: saved.defaultIva,
+            default_irpf_rate: saved.defaultIrpf,
+            notes: saved.notes || null,
+            is_active: saved.status === 'Activo',
+          });
+          const mapped = clientRowToContact(row, activities);
+          setClients((prev) => prev.map((c) => (c.id === saved.id ? mapped : c)));
+          showToast(`Ficha de «${mapped.name}» actualizada en Supabase.`);
+        }
+      } else {
+        if (isNew) {
+          const row = await createSupplier({
+            organization_id: organization.id,
+            activity_id: targetActivityId,
+            name: saved.name,
+            tax_id: saved.nif,
+            email: saved.email || null,
+            phone: saved.phone || null,
+            address: saved.address || null,
+            default_vat_rate: saved.defaultIva,
+            default_irpf_rate: saved.defaultIrpf,
+            notes: saved.notes || null,
+            is_active: saved.status === 'Activo',
+          });
+          const mapped = supplierRowToContact(row, activities);
+          setSuppliers((prev) => [mapped, ...prev]);
+          showToast(`Proveedor «${mapped.name}» registrado en Supabase.`);
+        } else {
+          const row = await updateSupplier(saved.id, organization.id, {
+            activity_id: targetActivityId,
+            name: saved.name,
+            tax_id: saved.nif,
+            email: saved.email || null,
+            phone: saved.phone || null,
+            address: saved.address || null,
+            default_vat_rate: saved.defaultIva,
+            default_irpf_rate: saved.defaultIrpf,
+            notes: saved.notes || null,
+            is_active: saved.status === 'Activo',
+          });
+          const mapped = supplierRowToContact(row, activities);
+          setSuppliers((prev) => prev.map((s) => (s.id === saved.id ? mapped : s)));
+          showToast(`Ficha de «${mapped.name}» actualizada en Supabase.`);
+        }
+      }
     } else {
-      setSuppliers((prev) =>
-        isNew ? [saved, ...prev] : prev.map((s) => (s.id === saved.id ? saved : s))
-      );
-      showToast(isNew ? `Proveedor «${saved.name}» añadido.` : `Ficha de «${saved.name}» actualizada.`);
+      // In-memory demo mode fallback
+      if (saved.kind === 'cliente') {
+        setClients((prev) =>
+          isNew ? [saved, ...prev] : prev.map((c) => (c.id === saved.id ? saved : c))
+        );
+        showToast(isNew ? `Cliente «${saved.name}» añadido.` : `Ficha de «${saved.name}» actualizada.`);
+      } else {
+        setSuppliers((prev) =>
+          isNew ? [saved, ...prev] : prev.map((s) => (s.id === saved.id ? saved : s))
+        );
+        showToast(isNew ? `Proveedor «${saved.name}» añadido.` : `Ficha de «${saved.name}» actualizada.`);
+      }
     }
+  };
+
+  const handleDeleteContact = async (id: string, kind: ContactKind) => {
+    if (isConfigured && session && organization?.id) {
+      if (kind === 'cliente') {
+        await deleteClient(id, organization.id);
+        setClients((prev) => prev.filter((c) => c.id !== id));
+        showToast('Cliente eliminado de Supabase.');
+      } else {
+        await deleteSupplier(id, organization.id);
+        setSuppliers((prev) => prev.filter((s) => s.id !== id));
+        showToast('Proveedor eliminado de Supabase.');
+      }
+    } else {
+      if (kind === 'cliente') {
+        setClients((prev) => prev.filter((c) => c.id !== id));
+      } else {
+        setSuppliers((prev) => prev.filter((s) => s.id !== id));
+      }
+      showToast('Registro eliminado de la memoria.');
+    }
+  };
+
+  const handleArchiveContact = async (id: string, kind: ContactKind, nextActive: boolean) => {
+    const statusLabel = nextActive ? 'Activo' : 'Inactivo';
+    if (isConfigured && session && organization?.id) {
+      if (kind === 'cliente') {
+        const updated = await archiveClient(id, organization.id, nextActive);
+        const mapped = clientRowToContact(updated, activities);
+        setClients((prev) => prev.map((c) => (c.id === id ? mapped : c)));
+      } else {
+        const updated = await archiveSupplier(id, organization.id, nextActive);
+        const mapped = supplierRowToContact(updated, activities);
+        setSuppliers((prev) => prev.map((s) => (s.id === id ? mapped : s)));
+      }
+    } else {
+      if (kind === 'cliente') {
+        setClients((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, status: statusLabel } : c))
+        );
+      } else {
+        setSuppliers((prev) =>
+          prev.map((s) => (s.id === id ? { ...s, status: statusLabel } : s))
+        );
+      }
+    }
+    showToast(nextActive ? 'Contacto reactivado.' : 'Contacto archivado.');
   };
 
   const handleSaveInvoice = (saved: IssuedInvoice, isNew: boolean) => {
@@ -318,6 +495,8 @@ function MainApp() {
               issuedInvoices={issuedInvoices}
               receivedInvoices={receivedInvoices}
               globalActivityFilter={activityFilter}
+              activityOptions={activityOptions}
+              isLoading={isContactsLoading}
               onOpenContact={(contact) =>
                 setContactModal({ open: true, kind: 'cliente', contact })
               }
@@ -334,6 +513,8 @@ function MainApp() {
               issuedInvoices={issuedInvoices}
               receivedInvoices={receivedInvoices}
               globalActivityFilter={activityFilter}
+              activityOptions={activityOptions}
+              isLoading={isContactsLoading}
               onOpenContact={(contact) =>
                 setContactModal({ open: true, kind: 'proveedor', contact })
               }
@@ -383,10 +564,13 @@ function MainApp() {
         kind={contactModal.kind}
         contact={contactModal.contact}
         defaultActivity={defaultActivity}
+        availableActivities={activities.map((a) => ({ id: a.id, name: a.name }))}
         issuedInvoices={issuedInvoices}
         receivedInvoices={receivedInvoices}
         onClose={() => setContactModal((prev) => ({ ...prev, open: false }))}
         onSave={handleSaveContact}
+        onDelete={handleDeleteContact}
+        onArchive={handleArchiveContact}
       />
 
       <InvoiceEditorModal

@@ -250,6 +250,147 @@ BEGIN
 END;
 $$;
 
+-- ------------------------------------------------------------------------------
+-- 8. TEST 6: Clients Isolation and Cross-Tenant Shared NIFs
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_user_a uuid := '11111111-1111-1111-1111-111111111111'::uuid;
+  v_user_b uuid := '22222222-2222-2222-2222-222222222222'::uuid;
+  v_org_a_id uuid := current_setting('test.org_a_id')::uuid;
+  v_org_b_id uuid := current_setting('test.org_b_id')::uuid;
+  v_client_a_id uuid;
+  v_client_b_id uuid;
+  v_count integer;
+  v_duplicate_failed boolean := false;
+BEGIN
+  -- Impersonate User A and insert a client
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  INSERT INTO public.clients (
+    organization_id, name, tax_id, email, address, default_vat_rate, default_irpf_rate
+  ) VALUES (
+    v_org_a_id, 'Cliente Alfa SL', 'B12345678', 'alfa@example.com', 'Calle Principal 1', 21.00, 15.00
+  ) RETURNING id INTO v_client_a_id;
+
+  -- Verify User A sees their client
+  SELECT count(*) INTO v_count FROM public.clients;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 6.1 FAILED: User A should see 1 client, saw %', v_count;
+  END IF;
+
+  -- Test intra-tenant unique violation for User A
+  BEGIN
+    INSERT INTO public.clients (
+      organization_id, name, tax_id
+    ) VALUES (
+      v_org_a_id, 'Cliente Alfa Duplicado', 'B12345678'
+    );
+  EXCEPTION WHEN unique_violation THEN
+    v_duplicate_failed := true;
+  END;
+
+  IF NOT v_duplicate_failed THEN
+    RAISE EXCEPTION 'TEST 6.2 FAILED: Intra-tenant duplicate tax_id was allowed!';
+  END IF;
+
+  -- Impersonate User B
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text)::text, true);
+
+  -- User B must see 0 clients initially (cannot see Client A)
+  SELECT count(*) INTO v_count FROM public.clients;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'TEST 6.3 FAILED (SECURITY BREACH): User B can see Client A!';
+  END IF;
+
+  -- User B inserts client with the SAME tax_id (cross-tenant sharing allowed)
+  INSERT INTO public.clients (
+    organization_id, name, tax_id, email, address, default_vat_rate, default_irpf_rate
+  ) VALUES (
+    v_org_b_id, 'Cliente Beta SL (Mismo CIF)', 'B12345678', 'beta@example.com', 'Calle Secundaria 2', 21.00, 0.00
+  ) RETURNING id INTO v_client_b_id;
+
+  -- User B should now see only their 1 client
+  SELECT count(*) INTO v_count FROM public.clients;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 6.4 FAILED: User B should see 1 client, saw %', v_count;
+  END IF;
+
+  -- Impersonate User A again to test cross-tenant UPDATE and DELETE attempts
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  UPDATE public.clients SET name = 'Hackeado' WHERE id = v_client_b_id;
+  DELETE FROM public.clients WHERE id = v_client_b_id;
+
+  -- Verify Client B was NOT modified or deleted
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text)::text, true);
+  SELECT count(*) INTO v_count FROM public.clients WHERE id = v_client_b_id AND name = 'Cliente Beta SL (Mismo CIF)';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 6.5 FAILED (SECURITY BREACH): User A modified or deleted Client B!';
+  END IF;
+
+  RAISE NOTICE '[PASS] Test 6: Clients isolation and cross-tenant uniqueness validated.';
+  RESET ROLE;
+END;
+$$;
+
+-- ------------------------------------------------------------------------------
+-- 9. TEST 7: Suppliers Isolation
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_user_a uuid := '11111111-1111-1111-1111-111111111111'::uuid;
+  v_user_b uuid := '22222222-2222-2222-2222-222222222222'::uuid;
+  v_org_a_id uuid := current_setting('test.org_a_id')::uuid;
+  v_org_b_id uuid := current_setting('test.org_b_id')::uuid;
+  v_supplier_a_id uuid;
+  v_supplier_b_id uuid;
+  v_count integer;
+BEGIN
+  -- Impersonate User A and insert a supplier
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  INSERT INTO public.suppliers (
+    organization_id, name, tax_id, default_expense_category
+  ) VALUES (
+    v_org_a_id, 'Proveedor A Suministros', 'A99112233', 'Material de oficina'
+  ) RETURNING id INTO v_supplier_a_id;
+
+  -- Impersonate User B
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text)::text, true);
+
+  -- User B cannot read Supplier A
+  SELECT count(*) INTO v_count FROM public.suppliers WHERE id = v_supplier_a_id;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'TEST 7.1 FAILED (SECURITY BREACH): User B read Supplier A!';
+  END IF;
+
+  -- User B creates Supplier B
+  INSERT INTO public.suppliers (
+    organization_id, name, tax_id, default_expense_category
+  ) VALUES (
+    v_org_b_id, 'Proveedor B Software', 'B88223344', 'Software y SaaS'
+  ) RETURNING id INTO v_supplier_b_id;
+
+  -- User B sees only Supplier B
+  SELECT count(*) INTO v_count FROM public.suppliers;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 7.2 FAILED: User B should see 1 supplier, saw %', v_count;
+  END IF;
+
+  RAISE NOTICE '[PASS] Test 7: Suppliers isolation validated.';
+  RESET ROLE;
+END;
+$$;
+
 DO $$
 BEGIN
   RAISE NOTICE '------------------------------------------------------------';
@@ -260,3 +401,4 @@ $$;
 
 -- Rollback entire transaction to leave database clean
 ROLLBACK;
+

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, Plus, ChevronRight, Users } from 'lucide-react';
+import { Search, Plus, ChevronRight, Users, Loader2 } from 'lucide-react';
 import type {
   ActivityFilter,
   Contact,
@@ -20,6 +20,8 @@ interface ContactsPageProps {
   issuedInvoices: IssuedInvoice[];
   receivedInvoices: ReceivedInvoice[];
   globalActivityFilter: ActivityFilter;
+  activityOptions?: ActivityFilter[];
+  isLoading?: boolean;
   onOpenContact: (contact: Contact) => void;
   onCreateContact: () => void;
 }
@@ -30,6 +32,8 @@ export function ContactsPage({
   issuedInvoices,
   receivedInvoices,
   globalActivityFilter,
+  activityOptions,
+  isLoading = false,
   onOpenContact,
   onCreateContact,
 }: ContactsPageProps) {
@@ -122,9 +126,17 @@ export function ContactsPage({
               onChange={(e) => setLocalActivity(e.target.value as ActivityFilter)}
               className="rounded-xl bg-white px-3.5 py-2.5 text-[13px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none"
             >
-              <option value="Todas las actividades">Todas las actividades</option>
-              <option value="Contabilidad Comunidades">Contabilidad Comunidades</option>
-              <option value="Actividad Artística">Actividad Artística</option>
+              {(
+                activityOptions || [
+                  'Todas las actividades',
+                  'Contabilidad Comunidades',
+                  'Actividad Artística',
+                ]
+              ).map((act) => (
+                <option key={act} value={act}>
+                  {act}
+                </option>
+              ))}
             </select>
           ) : (
             <span className="text-[13px] text-[#6E6E73]">
@@ -136,7 +148,17 @@ export function ContactsPage({
 
       {/* Clean Borderless-Column Table */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
-        {filteredContacts.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+            <Loader2 className="h-6 w-6 animate-spin text-[#0071E3]" aria-hidden="true" />
+            <p className="mt-3 text-[14px] font-medium text-[#1D1D1F]">
+              Cargando {title.toLowerCase()}…
+            </p>
+            <p className="mt-1 text-[12px] text-[#6E6E73]">
+              Sincronizando registros con Supabase
+            </p>
+          </div>
+        ) : filteredContacts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
             <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F5F5F7] text-[#86868B]">
               <Users className="h-5 w-5" aria-hidden="true" />

@@ -23,14 +23,21 @@ export interface Contact {
   name: string;
   nif: string;
   email: string;
+  phone?: string;
   address: string;
+  city?: string;
+  postalCode?: string;
+  country?: string;
   activity: ActivityType;
+  activityId?: string;
   defaultIva: IvaRate;
   defaultIrpf: IrpfRate;
   status: ContactStatus;
   /** Historical billed/spent before the active ledger window (in EUR) */
   historicalVolume: number;
   notes?: string;
+  paymentTerms?: string;
+  iban?: string;
 }
 
 export interface InvoiceLine {
