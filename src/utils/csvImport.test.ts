@@ -103,3 +103,65 @@ test('generateCsvTemplate outputs UTF-8 BOM and semicolon formatted template for
   assert.ok(supplierTemplate.startsWith('\uFEFF'));
   assert.ok(supplierTemplate.includes('pedidos@minervabellasartes.es'));
 });
+
+test('parseAndValidateContactsCsv accepts rows with empty or whitespace NIF as valid', () => {
+  const rawCsv =
+    'Nombre;NIF;Email\n' +
+    '"Inquilino Particular 1";"";"inquilino1@gmail.com"\n' +
+    '"Cliente Minorista Mostrador";"   ";"cliente2@gmail.com"';
+
+  const result = parseAndValidateContactsCsv(rawCsv, 'cliente');
+  assert.equal(result.summary.total, 2);
+  assert.equal(result.summary.valid, 2);
+  assert.equal(result.summary.invalid, 0);
+  assert.equal(result.validRows.length, 2);
+  assert.equal(result.validRows[0].name, 'Inquilino Particular 1');
+  assert.equal(result.validRows[0].tax_id, '');
+  assert.equal(result.validRows[1].name, 'Cliente Minorista Mostrador');
+  assert.equal(result.validRows[1].tax_id, '');
+});
+
+test('parseAndValidateContactsCsv rejects invalid NIF format while accepting empty NIF in the same batch', () => {
+  const rawCsv =
+    'Nombre;NIF;Email\n' +
+    '"Cliente Sin NIF Válido";"";"sin_nif@gmail.com"\n' +
+    '"Cliente Con NIF Erróneo";"12345678A";"error@empresa.es"';
+
+  const result = parseAndValidateContactsCsv(rawCsv, 'cliente');
+  assert.equal(result.summary.total, 2);
+  assert.equal(result.summary.valid, 1);
+  assert.equal(result.summary.invalid, 1);
+  assert.equal(result.validRows[0].name, 'Cliente Sin NIF Válido');
+  assert.equal(result.validRows[0].tax_id, '');
+  assert.equal(result.invalidRows[0].rowNumber, 3);
+  assert.match(result.invalidRows[0].reason, /NIF\/CIF no válido/);
+});
+
+test('parseAndValidateContactsCsv detects intra-file duplicate contacts by name when NIF is empty', () => {
+  const rawCsv =
+    'Nombre;NIF;Email\n' +
+    '"Inquilino Puerta A";"";"primero@test.es"\n' +
+    '"Inquilino Puerta A";"";"segundo@test.es"';
+
+  const result = parseAndValidateContactsCsv(rawCsv, 'cliente');
+  assert.equal(result.summary.total, 2);
+  assert.equal(result.summary.valid, 1);
+  assert.equal(result.summary.invalid, 1);
+  assert.equal(result.summary.duplicates, 1);
+  assert.equal(result.invalidRows[0].rowNumber, 3);
+  assert.match(result.invalidRows[0].reason, /Contacto duplicado sin NIF/);
+});
+
+test('parseAndValidateContactsCsv accepts distinct names with empty NIF', () => {
+  const rawCsv =
+    'Nombre;NIF;Email\n' +
+    '"Inquilino 1ºA";"";"1a@alquiler.es"\n' +
+    '"Inquilino 2ºB";"";"2b@alquiler.es"';
+
+  const result = parseAndValidateContactsCsv(rawCsv, 'cliente');
+  assert.equal(result.summary.total, 2);
+  assert.equal(result.summary.valid, 2);
+  assert.equal(result.summary.invalid, 0);
+  assert.equal(result.summary.duplicates, 0);
+});
+

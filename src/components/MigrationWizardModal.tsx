@@ -614,7 +614,7 @@ export function MigrationWizardModal({
                         <div className="min-w-0 pr-2">
                           <p className="font-semibold text-[#1D1D1F] truncate">{row.name}</p>
                           <p className="text-[12px] text-[#6E6E73]">
-                            <span className="font-mono font-medium text-[#1D1D1F]">{row.tax_id}</span>
+                            <span className="font-mono font-medium text-[#1D1D1F]">{row.tax_id || 'Sin NIF'}</span>
                             {row.city ? ` · ${row.city}` : ''}
                             {row.email ? ` · ${row.email}` : ''}
                             <span className="tabular-nums"> · IVA {row.default_vat_rate}%</span>

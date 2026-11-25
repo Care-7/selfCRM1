@@ -221,7 +221,7 @@ export function ContactsPage({
                         </button>
                       </td>
                       <td className="py-4 px-4 font-mono text-[13px] tabular-nums text-[#1D1D1F] whitespace-nowrap">
-                        {contact.nif}
+                        {contact.nif || '—'}
                       </td>
                       <td className="py-4 px-4 text-[13px] text-[#6E6E73] whitespace-nowrap">
                         {contact.activity}

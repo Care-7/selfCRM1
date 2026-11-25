@@ -6,7 +6,7 @@
  * Normalizes a Spanish or international tax ID:
  * Removes leading/trailing whitespace, converts to uppercase, and strips hyphens and internal spaces.
  */
-export function normalizeTaxId(raw: string): string {
+export function normalizeTaxId(raw?: string | null): string {
   if (!raw || typeof raw !== 'string') return '';
   return raw.trim().toUpperCase().replace(/[\s-]/g, '');
 }

@@ -369,6 +369,7 @@ export function parseAndValidateContactsCsv(
   const validRows: ParsedContactRow[] = [];
   const invalidRows: InvalidCsvRow[] = [];
   const seenNifs = new Set<string>();
+  const seenNamesWithoutNif = new Set<string>();
   let duplicatesCount = 0;
 
   rows.forEach((row, rowIndex) => {
@@ -391,39 +392,46 @@ export function parseAndValidateContactsCsv(
       return;
     }
 
-    // Check mandatory tax ID & validate format
-    if (!rawTaxId) {
-      invalidRows.push({
-        rowNumber,
-        raw: rawRecord,
-        reason: 'El NIF/CIF/NIE es obligatorio.',
-      });
-      return;
-    }
+    let normalizedTaxId = '';
 
-    const taxValidation = validateSpanishTaxId(rawTaxId);
-    if (!taxValidation.isValid) {
-      invalidRows.push({
-        rowNumber,
-        raw: rawRecord,
-        reason: `NIF/CIF no válido (${rawTaxId}): ${taxValidation.errorMessage || 'Formato incorrecto'}`,
-      });
-      return;
-    }
+    if (rawTaxId) {
+      const taxValidation = validateSpanishTaxId(rawTaxId);
+      if (!taxValidation.isValid) {
+        invalidRows.push({
+          rowNumber,
+          raw: rawRecord,
+          reason: `NIF/CIF no válido (${rawTaxId}): ${taxValidation.errorMessage || 'Formato incorrecto'}`,
+        });
+        return;
+      }
 
-    const normalizedTaxId = taxValidation.formatted;
+      normalizedTaxId = taxValidation.formatted;
 
-    // Intra-file duplicate check
-    if (seenNifs.has(normalizedTaxId)) {
-      duplicatesCount++;
-      invalidRows.push({
-        rowNumber,
-        raw: rawRecord,
-        reason: `NIF duplicado en el mismo archivo (${normalizedTaxId}). Se omite la fila repetida.`,
-      });
-      return;
+      // Intra-file duplicate check by tax_id
+      if (seenNifs.has(normalizedTaxId)) {
+        duplicatesCount++;
+        invalidRows.push({
+          rowNumber,
+          raw: rawRecord,
+          reason: `NIF duplicado en el mismo archivo (${normalizedTaxId}). Se omite la fila repetida.`,
+        });
+        return;
+      }
+      seenNifs.add(normalizedTaxId);
+    } else {
+      // Intra-file duplicate check by normalized name when NIF is empty
+      const normalizedName = rawName.toLowerCase();
+      if (seenNamesWithoutNif.has(normalizedName)) {
+        duplicatesCount++;
+        invalidRows.push({
+          rowNumber,
+          raw: rawRecord,
+          reason: `Contacto duplicado sin NIF en el mismo archivo con el mismo nombre («${rawName}»). Se omite la fila repetida.`,
+        });
+        return;
+      }
+      seenNamesWithoutNif.add(normalizedName);
     }
-    seenNifs.add(normalizedTaxId);
 
     // Parse additional fields
     const email = fieldIndexMap.email !== undefined ? row[fieldIndexMap.email]?.trim() : undefined;

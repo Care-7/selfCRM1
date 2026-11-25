@@ -138,9 +138,15 @@ export function ContactSlideOver({
       nextErrors.name = 'Introduce el nombre o razón social.';
     }
 
-    const nifValidation = validateSpanishTaxId(nif);
-    if (!nifValidation.isValid) {
-      nextErrors.nif = nifValidation.errorMessage || 'Introduce un NIF, NIE o CIF español válido.';
+    let cleanedNif = '';
+    const trimmedNif = nif.trim();
+    if (trimmedNif) {
+      const nifValidation = validateSpanishTaxId(trimmedNif);
+      if (!nifValidation.isValid) {
+        nextErrors.nif = nifValidation.errorMessage || 'Introduce un NIF, NIE o CIF español válido.';
+      } else {
+        cleanedNif = nifValidation.formatted;
+      }
     }
 
     if (!email.trim() || !email.includes('@')) {
@@ -154,8 +160,6 @@ export function ContactSlideOver({
       setErrors(nextErrors);
       return;
     }
-
-    const cleanedNif = nifValidation.formatted || nif.trim().toUpperCase().replace(/[\s-]/g, '');
 
     const saved: Contact = {
       id: contact ? contact.id : `${kind === 'cliente' ? 'cli' : 'sup'}-${Date.now()}`,
@@ -285,7 +289,7 @@ export function ContactSlideOver({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label htmlFor="contact-nif" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  NIF / CIF <span className="text-[#0071E3]">*</span>
+                  NIF / CIF <span className="text-[12px] font-normal text-[#86868B]">(opcional)</span>
                 </label>
                 <input
                   id="contact-nif"

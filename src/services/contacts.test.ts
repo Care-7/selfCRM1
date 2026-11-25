@@ -207,3 +207,57 @@ test('non-optimistic mutation guarantee: if service fails or throws, local state
   assert.equal(localList[0].id, 'c2');
 });
 
+test('clientRowToContact and supplierRowToContact map null tax_id to empty string', () => {
+  const mockActivities: BusinessActivity[] = [];
+  const clientRow: ClientRow = {
+    id: 'cli-null-nif',
+    organization_id: 'org-1',
+    activity_id: null,
+    name: 'Cliente Sin NIF',
+    tax_id: null,
+    email: null,
+    phone: null,
+    address: null,
+    city: null,
+    postal_code: null,
+    country: 'ES',
+    default_vat_rate: 21,
+    default_irpf_rate: 0,
+    payment_terms: null,
+    iban: null,
+    notes: null,
+    is_active: true,
+    created_at: '2026-11-25T10:00:00Z',
+    updated_at: '2026-11-25T10:00:00Z',
+  };
+  const contact = clientRowToContact(clientRow, mockActivities);
+  assert.equal(contact.name, 'Cliente Sin NIF');
+  assert.equal(contact.nif, '');
+
+  const supplierRow: SupplierRow = {
+    id: 'sup-null-nif',
+    organization_id: 'org-1',
+    activity_id: null,
+    name: 'Proveedor Sin NIF',
+    tax_id: null,
+    email: null,
+    phone: null,
+    address: null,
+    city: null,
+    postal_code: null,
+    country: 'ES',
+    default_vat_rate: 21,
+    default_irpf_rate: 0,
+    default_expense_category: null,
+    iban: null,
+    notes: null,
+    is_active: true,
+    created_at: '2026-11-25T10:00:00Z',
+    updated_at: '2026-11-25T10:00:00Z',
+  };
+  const supContact = supplierRowToContact(supplierRow, mockActivities);
+  assert.equal(supContact.name, 'Proveedor Sin NIF');
+  assert.equal(supContact.nif, '');
+});
+
+

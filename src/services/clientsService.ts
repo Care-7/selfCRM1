@@ -30,9 +30,6 @@ export async function createClient(input: CreateClientInput): Promise<ClientRow>
   if (!input.name?.trim()) {
     throw new Error('El nombre o razón social del cliente es obligatorio.');
   }
-  if (!normalizedTaxId) {
-    throw new Error('El NIF/CIF del cliente es obligatorio.');
-  }
 
   const sanitizedActivityId = isValidUuid(input.activity_id) ? input.activity_id : null;
 
@@ -42,7 +39,7 @@ export async function createClient(input: CreateClientInput): Promise<ClientRow>
       organization_id: input.organization_id,
       activity_id: sanitizedActivityId,
       name: input.name.trim(),
-      tax_id: normalizedTaxId,
+      tax_id: normalizedTaxId || null,
       email: input.email?.trim() || null,
       phone: input.phone?.trim() || null,
       address: input.address?.trim() || null,
@@ -85,8 +82,7 @@ export async function updateClient(
   }
   if (input.tax_id !== undefined) {
     const norm = normalizeTaxId(input.tax_id);
-    if (!norm) throw new Error('El NIF/CIF no puede estar vacío.');
-    updatePayload.tax_id = norm;
+    updatePayload.tax_id = norm || null;
   }
   if (input.activity_id !== undefined) {
     updatePayload.activity_id = isValidUuid(input.activity_id) ? input.activity_id : null;

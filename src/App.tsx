@@ -84,7 +84,7 @@ import {
   receivedInvoiceRowToReceivedInvoice,
   receivedInvoiceToCreateInput,
 } from './services/receivedInvoiceMappers';
-import { isValidUuid } from './services/databaseErrors';
+import { isValidUuid, normalizeTaxId } from './services/databaseErrors';
 
 function MainApp() {
   const {
@@ -668,12 +668,31 @@ function MainApp() {
       let imported = 0;
       let skipped = 0;
 
+      const existingNifs = new Set(clients.map((c) => normalizeTaxId(c.nif)).filter(Boolean));
+      const existingNamesWithoutNif = new Set(
+        clients.filter((c) => !normalizeTaxId(c.nif)).map((c) => c.name.trim().toLowerCase())
+      );
+
       for (const row of newClients) {
+        const rowNormNif = normalizeTaxId(row.tax_id || '');
+        const rowNormName = row.name.trim().toLowerCase();
+
+        if (rowNormNif && existingNifs.has(rowNormNif)) {
+          skipped++;
+          console.warn(`Omitido cliente ${row.name} (${row.tax_id}): NIF duplicado.`);
+          continue;
+        }
+        if (!rowNormNif && existingNamesWithoutNif.has(rowNormName)) {
+          skipped++;
+          console.warn(`Omitido cliente ${row.name} (Sin NIF): Nombre duplicado.`);
+          continue;
+        }
+
         try {
           await createClient({
             organization_id: organization.id,
             name: row.name,
-            tax_id: row.tax_id,
+            tax_id: row.tax_id || null,
             email: row.email || null,
             phone: row.phone || null,
             address: row.address || null,
@@ -688,6 +707,8 @@ function MainApp() {
             is_active: true,
           });
           imported++;
+          if (rowNormNif) existingNifs.add(rowNormNif);
+          else existingNamesWithoutNif.add(rowNormName);
         } catch (err: any) {
           skipped++;
           console.warn(`Omitido cliente ${row.name} (${row.tax_id}):`, err.message);
@@ -706,11 +727,37 @@ function MainApp() {
       return { imported, skipped };
     } else {
       const defaultActivity = (activities[0]?.name as ActivityType) || 'Contabilidad Comunidades';
-      const mappedContacts: Contact[] = newClients.map((row, idx) => ({
+      const existingNifs = new Set(clients.map((c) => normalizeTaxId(c.nif)).filter(Boolean));
+      const existingNamesWithoutNif = new Set(
+        clients.filter((c) => !normalizeTaxId(c.nif)).map((c) => c.name.trim().toLowerCase())
+      );
+
+      const toAdd: ParsedContactRow[] = [];
+      let skipped = 0;
+
+      for (const row of newClients) {
+        const rowNormNif = normalizeTaxId(row.tax_id || '');
+        const rowNormName = row.name.trim().toLowerCase();
+
+        if (rowNormNif && existingNifs.has(rowNormNif)) {
+          skipped++;
+          continue;
+        }
+        if (!rowNormNif && existingNamesWithoutNif.has(rowNormName)) {
+          skipped++;
+          continue;
+        }
+
+        toAdd.push(row);
+        if (rowNormNif) existingNifs.add(rowNormNif);
+        else existingNamesWithoutNif.add(rowNormName);
+      }
+
+      const mappedContacts: Contact[] = toAdd.map((row, idx) => ({
         id: `cli-mig-${Date.now()}-${idx}`,
         kind: 'cliente',
         name: row.name,
-        nif: row.tax_id,
+        nif: row.tax_id || '',
         email: row.email || '',
         phone: row.phone || undefined,
         address: row.address || '',
@@ -726,8 +773,12 @@ function MainApp() {
         status: 'Activo',
       }));
       setClients((prev) => [...mappedContacts, ...prev]);
-      showToast(`${mappedContacts.length} clientes importados en modo demo.`);
-      return { imported: mappedContacts.length, skipped: 0 };
+      showToast(
+        `Se han importado ${mappedContacts.length} clientes en modo demo${
+          skipped > 0 ? ` (${skipped} omitidos por duplicado)` : ''
+        }.`
+      );
+      return { imported: mappedContacts.length, skipped };
     }
   };
 
@@ -736,12 +787,31 @@ function MainApp() {
       let imported = 0;
       let skipped = 0;
 
+      const existingNifs = new Set(suppliers.map((s) => normalizeTaxId(s.nif)).filter(Boolean));
+      const existingNamesWithoutNif = new Set(
+        suppliers.filter((s) => !normalizeTaxId(s.nif)).map((s) => s.name.trim().toLowerCase())
+      );
+
       for (const row of newSuppliers) {
+        const rowNormNif = normalizeTaxId(row.tax_id || '');
+        const rowNormName = row.name.trim().toLowerCase();
+
+        if (rowNormNif && existingNifs.has(rowNormNif)) {
+          skipped++;
+          console.warn(`Omitido proveedor ${row.name} (${row.tax_id}): NIF duplicado.`);
+          continue;
+        }
+        if (!rowNormNif && existingNamesWithoutNif.has(rowNormName)) {
+          skipped++;
+          console.warn(`Omitido proveedor ${row.name} (Sin NIF): Nombre duplicado.`);
+          continue;
+        }
+
         try {
           await createSupplier({
             organization_id: organization.id,
             name: row.name,
-            tax_id: row.tax_id,
+            tax_id: row.tax_id || null,
             email: row.email || null,
             phone: row.phone || null,
             address: row.address || null,
@@ -755,6 +825,8 @@ function MainApp() {
             is_active: true,
           });
           imported++;
+          if (rowNormNif) existingNifs.add(rowNormNif);
+          else existingNamesWithoutNif.add(rowNormName);
         } catch (err: any) {
           skipped++;
           console.warn(`Omitido proveedor ${row.name} (${row.tax_id}):`, err.message);
@@ -773,11 +845,37 @@ function MainApp() {
       return { imported, skipped };
     } else {
       const defaultActivity = (activities[0]?.name as ActivityType) || 'Contabilidad Comunidades';
-      const mappedContacts: Contact[] = newSuppliers.map((row, idx) => ({
+      const existingNifs = new Set(suppliers.map((s) => normalizeTaxId(s.nif)).filter(Boolean));
+      const existingNamesWithoutNif = new Set(
+        suppliers.filter((s) => !normalizeTaxId(s.nif)).map((s) => s.name.trim().toLowerCase())
+      );
+
+      const toAdd: ParsedContactRow[] = [];
+      let skipped = 0;
+
+      for (const row of newSuppliers) {
+        const rowNormNif = normalizeTaxId(row.tax_id || '');
+        const rowNormName = row.name.trim().toLowerCase();
+
+        if (rowNormNif && existingNifs.has(rowNormNif)) {
+          skipped++;
+          continue;
+        }
+        if (!rowNormNif && existingNamesWithoutNif.has(rowNormName)) {
+          skipped++;
+          continue;
+        }
+
+        toAdd.push(row);
+        if (rowNormNif) existingNifs.add(rowNormNif);
+        else existingNamesWithoutNif.add(rowNormName);
+      }
+
+      const mappedContacts: Contact[] = toAdd.map((row, idx) => ({
         id: `sup-mig-${Date.now()}-${idx}`,
         kind: 'proveedor',
         name: row.name,
-        nif: row.tax_id,
+        nif: row.tax_id || '',
         email: row.email || '',
         phone: row.phone || undefined,
         address: row.address || '',
@@ -793,8 +891,12 @@ function MainApp() {
         status: 'Activo',
       }));
       setSuppliers((prev) => [...mappedContacts, ...prev]);
-      showToast(`${mappedContacts.length} proveedores importados en modo demo.`);
-      return { imported: mappedContacts.length, skipped: 0 };
+      showToast(
+        `Se han importado ${mappedContacts.length} proveedores en modo demo${
+          skipped > 0 ? ` (${skipped} omitidos por duplicado)` : ''
+        }.`
+      );
+      return { imported: mappedContacts.length, skipped };
     }
   };
 

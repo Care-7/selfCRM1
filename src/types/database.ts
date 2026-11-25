@@ -82,7 +82,7 @@ export interface ClientRow {
   organization_id: string;
   activity_id: string | null;
   name: string;
-  tax_id: string;
+  tax_id: string | null;
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -104,7 +104,7 @@ export interface SupplierRow {
   organization_id: string;
   activity_id: string | null;
   name: string;
-  tax_id: string;
+  tax_id: string | null;
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -125,7 +125,7 @@ export interface CreateClientInput {
   organization_id: string;
   activity_id?: string | null;
   name: string;
-  tax_id: string;
+  tax_id?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -146,7 +146,7 @@ export interface CreateSupplierInput {
   organization_id: string;
   activity_id?: string | null;
   name: string;
-  tax_id: string;
+  tax_id?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -195,13 +195,13 @@ export interface Database {
       };
       clients: {
         Row: ClientRow;
-        Insert: Partial<ClientRow> & { organization_id: string; name: string; tax_id: string };
+        Insert: Partial<ClientRow> & { organization_id: string; name: string };
         Update: Partial<ClientRow>;
         Relationships: [];
       };
       suppliers: {
         Row: SupplierRow;
-        Insert: Partial<SupplierRow> & { organization_id: string; name: string; tax_id: string };
+        Insert: Partial<SupplierRow> & { organization_id: string; name: string };
         Update: Partial<SupplierRow>;
         Relationships: [];
       };
