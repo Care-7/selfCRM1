@@ -99,9 +99,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 5. Call Gemini 2.5 Flash API with tolerant responseSchema for tickets and receipts
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
-
+    // 5. Prepare Gemini payload with tolerant responseSchema for tickets and receipts
     const promptText = `
 Actúa como un experto contable y fiscal español homologado por la AEAT.
 Extrae los datos fiscales de este documento español (factura o ticket simplificado). Si un dato no aparece en el documento, devuelve null. Normaliza fechas a YYYY-MM-DD e importes como números decimales.
@@ -231,72 +229,114 @@ REGLAS FISCALES OBLIGATORIAS:
       },
     };
 
-    const geminiRes = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiPayload),
-    });
+    // 6. Configurable primary model with ordered fallback list
+    const primaryModel = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
+    const fallbackCandidates = [primaryModel, 'gemini-3.8-flash', 'gemini-3.0-flash'];
+    const candidateModels = Array.from(new Set(fallbackCandidates));
 
-    if (!geminiRes.ok) {
-      let googleMessage = '';
-      let googleStatus = '';
+    let lastGeminiRes: Response | null = null;
+    let lastGoogleMessage = '';
+    let lastGoogleStatus = '';
+    let rawText: string | null = null;
+    let usedModel = '';
+
+    for (const model of candidateModels) {
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+
       try {
-        const errJson = await geminiRes.json();
-        googleMessage = errJson?.error?.message || '';
-        googleStatus = errJson?.error?.status || '';
-      } catch {
-        try {
-          googleMessage = await geminiRes.text();
-        } catch {
-          // ignore
+        const geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiPayload),
+        });
+
+        lastGeminiRes = geminiRes;
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+          if (rawText) {
+            usedModel = model;
+            break;
+          }
         }
+
+        // Parse Google API error details
+        let googleMessage = '';
+        let googleStatus = '';
+        try {
+          const errJson = await geminiRes.json();
+          googleMessage = errJson?.error?.message || '';
+          googleStatus = errJson?.error?.status || '';
+        } catch {
+          try {
+            googleMessage = await geminiRes.text();
+          } catch {
+            // ignore
+          }
+        }
+
+        lastGoogleMessage = googleMessage;
+        lastGoogleStatus = googleStatus;
+        console.warn(`Gemini call failed for model '${model}' (HTTP ${geminiRes.status}):`, googleMessage);
+
+        const isModelUnavailable =
+          geminiRes.status === 404 ||
+          googleStatus === 'NOT_FOUND' ||
+          googleMessage.toLowerCase().includes('is no longer available') ||
+          googleMessage.toLowerCase().includes('not found') ||
+          googleMessage.toLowerCase().includes('unsupported model') ||
+          googleMessage.toLowerCase().includes('not supported');
+
+        if (isModelUnavailable) {
+          // Model deprecated or not found -> retry with next model in fallback list
+          continue;
+        }
+
+        // If client credentials are bad (401/403), no need to retry with another model
+        if (geminiRes.status === 401 || geminiRes.status === 403) {
+          break;
+        }
+      } catch (networkErr: any) {
+        console.warn(`Network error calling model '${model}':`, networkErr?.message);
       }
+    }
 
-      console.error('Gemini API error:', geminiRes.status, googleStatus, googleMessage);
-
+    if (!rawText) {
       let errorMessage = 'Error al procesar el documento con el servicio de IA.';
+      const status = lastGeminiRes?.status ?? 502;
 
       if (
-        geminiRes.status === 429 ||
-        googleStatus === 'RESOURCE_EXHAUSTED' ||
-        googleMessage.includes('quota') ||
-        googleMessage.includes('rate limit')
+        status === 429 ||
+        lastGoogleStatus === 'RESOURCE_EXHAUSTED' ||
+        lastGoogleMessage.includes('quota') ||
+        lastGoogleMessage.includes('rate limit')
       ) {
         errorMessage =
           'Cuota de uso de Gemini API agotada temporalmente. Por favor, inténtalo de nuevo en unos minutos.';
       } else if (
-        geminiRes.status === 401 ||
-        geminiRes.status === 403 ||
-        googleStatus === 'UNAUTHENTICATED' ||
-        googleStatus === 'PERMISSION_DENIED'
+        status === 401 ||
+        status === 403 ||
+        lastGoogleStatus === 'UNAUTHENTICATED' ||
+        lastGoogleStatus === 'PERMISSION_DENIED'
       ) {
         errorMessage = 'La clave GEMINI_API_KEY no es válida o no tiene permisos de acceso al modelo de IA.';
-      } else if (geminiRes.status === 400 || googleStatus === 'INVALID_ARGUMENT') {
+      } else if (status === 400 || lastGoogleStatus === 'INVALID_ARGUMENT') {
         if (
-          googleMessage.toLowerCase().includes('unsupported') ||
-          googleMessage.toLowerCase().includes('mime')
+          lastGoogleMessage.toLowerCase().includes('unsupported') ||
+          lastGoogleMessage.toLowerCase().includes('mime')
         ) {
           errorMessage =
             'El formato de archivo no es compatible con el modelo de IA. Utiliza imágenes JPG, PNG, WebP o documentos PDF.';
         } else {
-          errorMessage = `El documento no pudo ser procesado por la IA: ${googleMessage || 'Parámetros no válidos.'}`;
+          errorMessage = `El documento no pudo ser procesado por la IA: ${lastGoogleMessage || 'Parámetros no válidos.'}`;
         }
-      } else if (googleMessage) {
-        errorMessage = `Error del servicio de IA: ${googleMessage}`;
+      } else if (lastGoogleMessage) {
+        errorMessage = `Error del servicio de IA: ${lastGoogleMessage}`;
       }
 
       return new Response(
         JSON.stringify({ error: errorMessage }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const geminiData = await geminiRes.json();
-    const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-      return new Response(
-        JSON.stringify({ error: 'La IA no devolvió datos estructurados para este documento.' }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -362,6 +402,7 @@ REGLAS FISCALES OBLIGATORIAS:
       JSON.stringify({
         success: true,
         data: sanitizedData,
+        model: usedModel,
         fileName: fileName || 'documento.pdf',
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

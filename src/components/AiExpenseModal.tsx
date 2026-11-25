@@ -199,7 +199,7 @@ export function AiExpenseModal({
       setStep('scanning');
 
       if (isSupabaseConfigured) {
-        // Real extraction via Supabase Edge Function (Gemini 2.5 Flash on server)
+        // Real extraction via Supabase Edge Function (Gemini Flash on server)
         const extracted = await parseExpenseDocument(fileToAnalyze);
         const validation = validateExtractedAmounts(extracted);
         setAnalysisWarnings(validation.warnings);
