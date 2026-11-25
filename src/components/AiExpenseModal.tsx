@@ -9,10 +9,10 @@ import {
   FileText,
   ExternalLink,
   Percent,
-  Calendar,
-  Building2,
-  CreditCard,
   FileUp,
+  Sparkles,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import type {
   ActivityType,
@@ -31,6 +31,12 @@ import {
   calculateDeductibleAmounts,
 } from '../services/receivedInvoiceMappers';
 import { getExpenseDocumentSignedUrl } from '../services/receivedInvoicesService';
+import { isSupabaseConfigured } from '../lib/supabase';
+import {
+  parseExpenseDocument,
+  validateExtractedAmounts,
+  matchSupplierByTaxId,
+} from '../services/invoiceOcrService';
 
 interface AiExpenseModalProps {
   isOpen: boolean;
@@ -62,6 +68,9 @@ export function AiExpenseModal({
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
   const [isLoadingSignedUrl, setIsLoadingSignedUrl] = useState(false);
 
   // Form fields
@@ -84,14 +93,19 @@ export function AiExpenseModal({
   const [existingAttachmentPath, setExistingAttachmentPath] = useState<string | null>(null);
   const [existingAttachmentName, setExistingAttachmentName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
 
   // Rehydrate form when opening or changing expense
   useEffect(() => {
     if (!isOpen) return;
 
     setErrorMsg('');
+    setInfoMsg('');
     setAttachedFile(null);
     setIsSubmitting(false);
+    setIsAnalyzing(false);
+    setHasAnalyzed(false);
+    setAnalysisWarnings([]);
 
     if (expense) {
       // Editing existing expense
@@ -173,11 +187,107 @@ export function AiExpenseModal({
     setActivityId(act?.id);
   };
 
+  /**
+   * Real AI extraction using Supabase Edge Function parse-expense-document (or mock fallback).
+   */
+  const handleAnalyzeDocument = async (fileToAnalyze: File) => {
+    try {
+      setIsAnalyzing(true);
+      setErrorMsg('');
+      setInfoMsg('');
+      setAnalysisWarnings([]);
+      setStep('scanning');
+
+      if (isSupabaseConfigured) {
+        // Real extraction via Supabase Edge Function (Gemini 2.5 Flash on server)
+        const extracted = await parseExpenseDocument(fileToAnalyze);
+        const validation = validateExtractedAmounts(extracted);
+        setAnalysisWarnings(validation.warnings);
+
+        // Try matching supplier by extracted tax ID
+        const matched = matchSupplierByTaxId(extracted.supplier_tax_id, suppliers);
+        if (matched) {
+          setSelectedSupplierId(matched.id);
+          setSupplierName(matched.name);
+          setSupplierNif(matched.nif);
+          if (matched.activity) {
+            setActivity(matched.activity);
+            const act = activities.find((a) => a.name === matched.activity);
+            if (act) setActivityId(act.id);
+          }
+        } else {
+          setSelectedSupplierId('__custom__');
+          setSupplierName(extracted.supplier_name || '');
+          setSupplierNif(extracted.supplier_tax_id || '');
+        }
+
+        setNumber(extracted.supplier_invoice_number || '');
+        if (extracted.issue_date) {
+          setIssueDate(extracted.issue_date);
+          setAccountingDate(extracted.issue_date);
+        }
+        setBaseAmount(extracted.tax_base);
+        if (
+          extracted.vat_rate === 21 ||
+          extracted.vat_rate === 10 ||
+          extracted.vat_rate === 4 ||
+          extracted.vat_rate === 0
+        ) {
+          setIvaRate(extracted.vat_rate as IvaRate);
+        }
+        if (
+          extracted.irpf_rate === 15 ||
+          extracted.irpf_rate === 7 ||
+          extracted.irpf_rate === 0
+        ) {
+          setIrpfRate(extracted.irpf_rate as IrpfRate);
+        }
+        if (
+          extracted.suggested_pgc_category &&
+          PGC_EXPENSE_ACCOUNTS[extracted.suggested_pgc_category]
+        ) {
+          setPgcCode(extracted.suggested_pgc_category);
+        }
+        if (extracted.description) {
+          setConcept(extracted.description);
+        }
+
+        setHasAnalyzed(true);
+        setInfoMsg('Datos fiscales extraídos con IA. Por favor, revisa y confirma antes de guardar.');
+      } else {
+        // In-memory demo simulation
+        const sample = OCR_SAMPLE_INVOICES[0];
+        setSupplierName(sample.supplierName);
+        setSupplierNif(sample.supplierNif);
+        setNumber(sample.number);
+        setIssueDate(sample.issueDate);
+        setAccountingDate(sample.issueDate);
+        setActivity(sample.activity);
+        setConcept(sample.concept);
+        setBaseAmount(sample.baseAmount);
+        setIvaRate(sample.ivaRate);
+        setIrpfRate(sample.irpfRetainedRate);
+        setPgcCode(sample.pgcAccountCode);
+        setHasAnalyzed(true);
+        setInfoMsg('Simulación de lectura completada. Revisa los datos.');
+      }
+
+      setStep('review');
+    } catch (err: any) {
+      console.error('Error during AI expense extraction:', err);
+      setErrorMsg(err.message || 'Error al extraer los datos de la factura con IA.');
+      setStep('review');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const triggerSimulatedExtraction = (sample: OcrSampleInvoice) => {
     setSelectedFileName(sample.fileName);
     setAttachedFile(null);
     setStep('scanning');
     setErrorMsg('');
+    setInfoMsg('');
 
     window.setTimeout(() => {
       setSupplierName(sample.supplierName);
@@ -195,6 +305,7 @@ export function AiExpenseModal({
       setPgcCode(sample.pgcAccountCode);
       setDeductibleVatPct(100);
       setDeductibleExpensePct(100);
+      setHasAnalyzed(true);
       setStep('review');
     }, 520);
   };
@@ -202,16 +313,7 @@ export function AiExpenseModal({
   const handleFileDropOrSelect = (file: File) => {
     setSelectedFileName(file.name);
     setAttachedFile(file);
-    setStep('scanning');
-    setErrorMsg('');
-
-    // Pre-populate sensible defaults and let user review/complete
-    window.setTimeout(() => {
-      setStep('review');
-      if (!concept) {
-        setConcept(`Gasto según justificante ${file.name}`);
-      }
-    }, 450);
+    handleAnalyzeDocument(file);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -371,7 +473,7 @@ export function AiExpenseModal({
             <p className="text-[13px] text-[#6E6E73] mt-0.5">
               {isEditing
                 ? 'Edición de datos fiscales, deducibilidad por actividad y justificante.'
-                : 'Extracción por IA, selección de proveedor y asignación a epígrafe IAE.'}
+                : 'Lectura inteligente con IA, vinculación con proveedor y asignación a epígrafe IAE.'}
             </p>
           </div>
           <button
@@ -395,9 +497,19 @@ export function AiExpenseModal({
             </div>
           )}
 
+          {infoMsg && (
+            <div
+              role="status"
+              className="rounded-xl bg-[#E8F8EE] px-4 py-3 text-[13px] font-medium text-[#1D7A3F] flex items-center gap-2"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>{infoMsg}</span>
+            </div>
+          )}
+
           {step === 'upload' && !isEditing && (
             <div className="space-y-6">
-              {/* Drag & Drop zone */}
+              {/* Drag & Drop zone with prominent AI action */}
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -429,7 +541,7 @@ export function AiExpenseModal({
                   Arrastra tu factura (PDF, JPG, PNG, WebP) o haz clic para subir
                 </p>
                 <p className="mt-1 text-[13px] text-[#6E6E73]">
-                  Se almacenará de forma privada y encriptada en Supabase Storage.
+                  La IA de Gemini extraerá automáticamente proveedor, NIF, importes e IVA.
                 </p>
               </div>
 
@@ -459,24 +571,53 @@ export function AiExpenseModal({
             <div className="flex flex-col items-center justify-center py-14 text-center">
               <Loader2 className="h-9 w-9 animate-spin text-[#0071E3]" aria-hidden="true" />
               <p className="mt-4 text-[15px] font-semibold text-[#1D1D1F]">
-                Analizando documento y preparando imputación contable…
+                Extrayendo datos fiscales con IA...
               </p>
-              <p className="mt-1 text-[13px] text-[#6E6E73]">{selectedFileName}</p>
+              <p className="mt-1 text-[13px] text-[#6E6E73]">
+                {selectedFileName || 'Procesando documento...'}
+              </p>
             </div>
           )}
 
           {step === 'review' && (
             <form id="ai-expense-form" onSubmit={handleConfirmSave} className="space-y-6">
-              {/* Attachment banner if exists */}
+              {/* Attachment banner with prominent AI Action button */}
               {(attachedFile || existingAttachmentPath) && (
-                <div className="flex items-center justify-between gap-3 rounded-xl bg-[#F5F5F7] px-4 py-3 text-[13px] text-[#1D1D1F] border border-black/[0.04]">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-[#F5F5F7] px-4 py-3 text-[13px] text-[#1D1D1F] border border-black/[0.04]">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileCheck2 className="h-4 w-4 shrink-0 text-[#0071E3]" aria-hidden="true" />
                     <span className="truncate font-medium">
                       Justificante: {attachedFile ? attachedFile.name : existingAttachmentName || 'Documento adjunto'}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {attachedFile && (
+                      <button
+                        type="button"
+                        disabled={isAnalyzing}
+                        onClick={() => handleAnalyzeDocument(attachedFile)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#0071E3] px-3 py-1.5 text-[12px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.2)] hover:bg-[#0077ED] transition-colors disabled:opacity-50"
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Extrayendo datos fiscales...
+                          </>
+                        ) : hasAnalyzed ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Volver a analizar con IA
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Leer datos con IA
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     {existingAttachmentPath && !attachedFile && (
                       <button
                         type="button"
@@ -484,10 +625,15 @@ export function AiExpenseModal({
                         onClick={handleOpenExistingAttachment}
                         className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#0071E3] hover:underline"
                       >
-                        {isLoadingSignedUrl ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                        {isLoadingSignedUrl ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        )}
                         Ver archivo
                       </button>
                     )}
+
                     {!isEditing && (
                       <button
                         type="button"
@@ -495,12 +641,27 @@ export function AiExpenseModal({
                           setStep('upload');
                           setAttachedFile(null);
                         }}
-                        className="text-[12px] text-[#6E6E73] hover:underline ml-2"
+                        className="text-[12px] text-[#6E6E73] hover:underline ml-1"
                       >
                         Cambiar
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Mathematical / Multi-VAT Warning Banner */}
+              {analysisWarnings.length > 0 && (
+                <div className="rounded-xl bg-[#FFF9E6] border border-[#F59E0B]/25 p-3.5 text-[12px] text-[#92400E] space-y-1">
+                  <div className="flex items-center gap-1.5 font-semibold text-[#B45309]">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span>Aviso de revisión contable</span>
+                  </div>
+                  <ul className="list-disc list-inside space-y-0.5 text-[#78350F]">
+                    {analysisWarnings.map((warning, idx) => (
+                      <li key={idx}>{warning}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
@@ -840,8 +1001,7 @@ export function AiExpenseModal({
                       className="sr-only"
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {
-                          setAttachedFile(e.target.files[0]);
-                          setSelectedFileName(e.target.files[0].name);
+                          handleFileDropOrSelect(e.target.files[0]);
                         }
                       }}
                     />
@@ -953,7 +1113,7 @@ export function AiExpenseModal({
               <button
                 type="submit"
                 form="ai-expense-form"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isAnalyzing}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3] px-5 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] transition-colors hover:bg-[#0077ED] disabled:opacity-50"
               >
                 {isSubmitting ? (
