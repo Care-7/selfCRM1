@@ -494,6 +494,122 @@ BEGIN
 END;
 $$;
 
+-- ------------------------------------------------------------------------------
+-- 10. TEST 9: Received Invoices Isolation & Supplier Number Uniqueness
+-- ------------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_user_a uuid := '11111111-1111-1111-1111-111111111111'::uuid;
+  v_user_b uuid := '22222222-2222-2222-2222-222222222222'::uuid;
+  v_org_a_id uuid := current_setting('test.org_a_id')::uuid;
+  v_org_b_id uuid := current_setting('test.org_b_id')::uuid;
+  v_supplier_a_id uuid;
+  v_rec_inv_a_id uuid;
+  v_count integer;
+  v_duplicate_failed boolean := false;
+BEGIN
+  SET LOCAL ROLE authenticated;
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  -- Get supplier from Test 7
+  SELECT id INTO v_supplier_a_id FROM public.suppliers WHERE organization_id = v_org_a_id LIMIT 1;
+
+  -- 9.1 User A inserts a received invoice
+  INSERT INTO public.received_invoices (
+    organization_id,
+    supplier_id,
+    supplier_snapshot,
+    supplier_invoice_number,
+    issue_date,
+    accounting_date,
+    expense_category,
+    description,
+    tax_base,
+    vat_rate,
+    vat_total,
+    irpf_rate,
+    irpf_total,
+    total_amount,
+    deductible_vat_pct,
+    deductible_expense_pct,
+    payment_status
+  ) VALUES (
+    v_org_a_id,
+    v_supplier_a_id,
+    '{"name": "Proveedor A Suministros", "tax_id": "A99112233"}'::jsonb,
+    'FAC-2026-999',
+    CURRENT_DATE,
+    CURRENT_DATE,
+    '628',
+    'Suministros eléctricos y luz',
+    200.00,
+    21.00,
+    42.00,
+    0.00,
+    0.00,
+    242.00,
+    50.00,
+    50.00,
+    'pending'
+  ) RETURNING id INTO v_rec_inv_a_id;
+
+  -- Verify User A sees 1 received invoice
+  SELECT count(*) INTO v_count FROM public.received_invoices WHERE id = v_rec_inv_a_id;
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 9.1 FAILED: User A should see their received invoice, saw %', v_count;
+  END IF;
+
+  -- 9.2 Intra-tenant duplicate check for same supplier and invoice number must fail
+  BEGIN
+    INSERT INTO public.received_invoices (
+      organization_id, supplier_id, supplier_snapshot, supplier_invoice_number,
+      issue_date, accounting_date, expense_category, tax_base, vat_rate, vat_total,
+      irpf_rate, irpf_total, total_amount
+    ) VALUES (
+      v_org_a_id, v_supplier_a_id,
+      '{"name": "Proveedor A Suministros", "tax_id": "A99112233"}'::jsonb,
+      'FAC-2026-999',
+      CURRENT_DATE, CURRENT_DATE, '628', 100.00, 21.00, 21.00, 0.00, 0.00, 121.00
+    );
+  EXCEPTION WHEN unique_violation THEN
+    v_duplicate_failed := true;
+  END;
+
+  IF NOT v_duplicate_failed THEN
+    RAISE EXCEPTION 'TEST 9.2 FAILED: Duplicate supplier invoice number was permitted for the same supplier!';
+  END IF;
+
+  -- 9.3 User B cannot see User A's received invoice (SELECT isolation)
+  PERFORM set_config('request.jwt.claim.sub', v_user_b::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_b::text)::text, true);
+
+  SELECT count(*) INTO v_count FROM public.received_invoices WHERE id = v_rec_inv_a_id;
+  IF v_count <> 0 THEN
+    RAISE EXCEPTION 'TEST 9.3 FAILED (SECURITY BREACH): User B read User A received invoice!';
+  END IF;
+
+  -- 9.4 User B cannot update or delete User A's received invoice
+  UPDATE public.received_invoices SET description = 'Hacked' WHERE id = v_rec_inv_a_id;
+  DELETE FROM public.received_invoices WHERE id = v_rec_inv_a_id;
+
+  -- Verify User A's received invoice remains intact
+  PERFORM set_config('request.jwt.claim.sub', v_user_a::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_user_a::text)::text, true);
+
+  SELECT count(*) INTO v_count
+  FROM public.received_invoices
+  WHERE id = v_rec_inv_a_id AND description = 'Suministros eléctricos y luz';
+
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'TEST 9.4 FAILED (SECURITY BREACH): User A received invoice was modified or deleted by User B!';
+  END IF;
+
+  RAISE NOTICE '[PASS] Test 9: Received invoices RLS isolation and unique supplier number validated.';
+  RESET ROLE;
+END;
+$$;
+
 DO $$
 BEGIN
   RAISE NOTICE '------------------------------------------------------------';

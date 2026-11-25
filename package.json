@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/utils/finance.test.ts src/utils/validators.test.ts src/services/contacts.test.ts src/utils/csvImport.test.ts src/utils/verifactu.test.ts src/services/invoiceMappers.test.ts"
+    "test": "tsx --test src/utils/finance.test.ts src/utils/validators.test.ts src/services/contacts.test.ts src/utils/csvImport.test.ts src/utils/verifactu.test.ts src/services/invoiceMappers.test.ts src/services/receivedInvoices.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

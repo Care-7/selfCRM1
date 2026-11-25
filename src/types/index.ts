@@ -102,7 +102,9 @@ export interface ReceivedInvoice {
   supplierName: string;
   supplierNif: string;
   activity: ActivityType;
+  activityId?: string;
   issueDate: string; // YYYY-MM-DD
+  accountingDate?: string; // YYYY-MM-DD (registro/deducción contable)
   concept: string;
   pgcAccountCode: string;
   pgcAccountName: string;
@@ -111,6 +113,18 @@ export interface ReceivedInvoice {
   irpfRetainedRate?: IrpfRate; // For Mod. 111 (professional suppliers/rent)
   status: ReceivedInvoiceStatus;
   deductible: boolean;
+  deductibleVatPct?: number; // 0 - 100
+  deductibleExpensePct?: number; // 0 - 100
+  deductibleVatAmount?: number;
+  deductibleExpenseAmount?: number;
+  paymentStatus?: 'pending' | 'paid' | 'overdue';
+  paidAt?: string | null;
+  paymentMethod?: string | null;
+  attachmentPath?: string | null;
+  attachmentName?: string | null;
+  notes?: string | null;
+  lines?: any[];
+  supplierSnapshot?: { name: string; tax_id: string };
 }
 
 export interface InvoiceTotals {

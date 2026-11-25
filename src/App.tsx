@@ -12,6 +12,7 @@ import type {
   NavSection,
   PeriodFilter,
   ReceivedInvoice,
+  ReceivedInvoiceStatus,
   TaxRegime,
   UserProfile,
 } from './types';
@@ -71,6 +72,18 @@ import {
   createClientSnapshot,
   convertInvoiceLinesToDbItems,
 } from './services/invoiceMappers';
+import {
+  listReceivedInvoices,
+  createReceivedInvoice,
+  updateReceivedInvoice,
+  deleteReceivedInvoice,
+  updateReceivedInvoicePaymentStatus,
+  uploadExpenseDocument,
+} from './services/receivedInvoicesService';
+import {
+  receivedInvoiceRowToReceivedInvoice,
+  receivedInvoiceToCreateInput,
+} from './services/receivedInvoiceMappers';
 import { isValidUuid } from './services/databaseErrors';
 
 function MainApp() {
@@ -124,7 +137,10 @@ function MainApp() {
   }>({ open: false, invoice: null });
 
   const [rectifyingInvoice, setRectifyingInvoice] = useState<IssuedInvoice | null>(null);
-  const [aiExpenseOpen, setAiExpenseOpen] = useState(false);
+  const [expenseModal, setExpenseModal] = useState<{
+    open: boolean;
+    expense: ReceivedInvoice | null;
+  }>({ open: false, expense: null });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
 
@@ -142,7 +158,7 @@ function MainApp() {
     }, 3400);
   };
 
-  // Load real clients, suppliers, and issued invoices from Supabase when organization is active and auth loading is done
+  // Load real clients, suppliers, issued invoices, and received expenses from Supabase
   useEffect(() => {
     if (isConfigured && !loading && session && organization?.id) {
       let isMounted = true;
@@ -153,12 +169,14 @@ function MainApp() {
         listClients(organization.id),
         listSuppliers(organization.id),
         listIssuedInvoices(organization.id),
+        listReceivedInvoices(organization.id),
       ])
-        .then(([clientsRows, suppliersRows, invoicesRows]) => {
+        .then(([clientsRows, suppliersRows, invoicesRows, receivedRows]) => {
           if (!isMounted) return;
           setClients(clientsRows.map((r) => clientRowToContact(r, activities)));
           setSuppliers(suppliersRows.map((r) => supplierRowToContact(r, activities)));
           setIssuedInvoices(invoicesRows.map((r) => invoiceRowToIssuedInvoice(r, activities)));
+          setReceivedInvoices(receivedRows.map((r) => receivedInvoiceRowToReceivedInvoice(r, activities)));
         })
         .catch((err) => {
           console.error('Error al sincronizar datos desde Supabase:', err);
@@ -557,9 +575,92 @@ function MainApp() {
     setRectifyingInvoice(null);
   };
 
-  const handleSaveReceivedExpense = (expense: ReceivedInvoice) => {
-    setReceivedInvoices((prev) => [expense, ...prev]);
-    showToast(`Gasto ${expense.number} contabilizado en el Libro Diario.`);
+  const handleSaveReceivedExpense = async (expense: ReceivedInvoice, file?: File | null) => {
+    const isNew = !expenseModal.expense;
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa o sesión válida en Supabase.');
+      }
+
+      let attachmentPath = expense.attachmentPath || null;
+      let attachmentName = expense.attachmentName || null;
+
+      if (file) {
+        const uploaded = await uploadExpenseDocument(organization.id, file);
+        attachmentPath = uploaded.path;
+        attachmentName = uploaded.name;
+      }
+
+      const input = receivedInvoiceToCreateInput(
+        { ...expense, attachmentPath, attachmentName },
+        organization.id
+      );
+
+      if (isNew) {
+        const row = await createReceivedInvoice(input);
+        const mapped = receivedInvoiceRowToReceivedInvoice(row, activities);
+        // Only mutate state on confirmed database persistence
+        setReceivedInvoices((prev) => [mapped, ...prev]);
+        showToast(`Gasto «${mapped.number}» guardado en Supabase.`);
+      } else {
+        const row = await updateReceivedInvoice(expense.id, organization.id, input);
+        const mapped = receivedInvoiceRowToReceivedInvoice(row, activities);
+        setReceivedInvoices((prev) => prev.map((r) => (r.id === expense.id ? mapped : r)));
+        showToast(`Gasto «${mapped.number}» actualizado en Supabase.`);
+      }
+    } else {
+      // In-memory demo mode fallback
+      if (isNew) {
+        setReceivedInvoices((prev) => [expense, ...prev]);
+        showToast(`Gasto «${expense.number}» añadido.`);
+      } else {
+        setReceivedInvoices((prev) => prev.map((r) => (r.id === expense.id ? expense : r)));
+        showToast(`Gasto «${expense.number}» actualizado.`);
+      }
+    }
+  };
+
+  const handleDeleteReceivedExpense = async (expense: ReceivedInvoice) => {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa en Supabase.');
+      }
+      await deleteReceivedInvoice(expense.id, organization.id);
+    }
+    setReceivedInvoices((prev) => prev.filter((r) => r.id !== expense.id));
+    showToast(`Gasto «${expense.number}» eliminado.`);
+  };
+
+  const handleToggleReceivedPaymentStatus = async (expense: ReceivedInvoice) => {
+    const nextPaymentStatus = expense.paymentStatus === 'paid' ? 'pending' : 'paid';
+    const nextStatusLabel: ReceivedInvoiceStatus =
+      nextPaymentStatus === 'paid' ? 'Contabilizada' : 'Pendiente';
+
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa en Supabase.');
+      }
+      const row = await updateReceivedInvoicePaymentStatus(
+        expense.id,
+        organization.id,
+        nextPaymentStatus
+      );
+      const mapped = receivedInvoiceRowToReceivedInvoice(row, activities);
+      setReceivedInvoices((prev) => prev.map((r) => (r.id === expense.id ? mapped : r)));
+    } else {
+      setReceivedInvoices((prev) =>
+        prev.map((r) =>
+          r.id === expense.id
+            ? { ...r, status: nextStatusLabel, paymentStatus: nextPaymentStatus }
+            : r
+        )
+      );
+    }
+    showToast(
+      nextPaymentStatus === 'paid'
+        ? `Gasto «${expense.number}» marcado como pagado.`
+        : `Gasto «${expense.number}» marcado como pendiente.`
+    );
   };
 
   const handleImportClients = async (newClients: ParsedContactRow[]) => {
@@ -852,7 +953,8 @@ function MainApp() {
               activityFilter={activityFilter}
               onOpenNewInvoice={() => setInvoiceModal({ open: true, invoice: null })}
               onSelectIssuedInvoice={(invoice) => setInvoiceModal({ open: true, invoice })}
-              onOpenAiExpenseModal={() => setAiExpenseOpen(true)}
+              onOpenAiExpenseModal={() => setExpenseModal({ open: true, expense: null })}
+              onSelectReceivedInvoice={(invoice) => setExpenseModal({ open: true, expense: invoice })}
               onConvertToInvoice={handleConvertDocumentToInvoice}
             />
           )}
@@ -908,10 +1010,15 @@ function MainApp() {
       />
 
       <AiExpenseModal
-        isOpen={aiExpenseOpen}
+        isOpen={expenseModal.open}
+        expense={expenseModal.expense}
         suppliers={suppliers}
-        onClose={() => setAiExpenseOpen(false)}
+        activities={activities}
+        defaultActivity={defaultActivity}
+        onClose={() => setExpenseModal({ open: false, expense: null })}
         onSaveExpense={handleSaveReceivedExpense}
+        onDeleteExpense={handleDeleteReceivedExpense}
+        onTogglePaymentStatus={handleToggleReceivedPaymentStatus}
       />
 
       <SettingsModal

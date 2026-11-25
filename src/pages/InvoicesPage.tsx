@@ -10,6 +10,7 @@ import {
   Clock,
   ShieldCheck,
   AlertTriangle,
+  FileCheck2,
 } from 'lucide-react';
 import type {
   ActivityFilter,
@@ -46,6 +47,7 @@ interface InvoicesPageProps {
   onSelectIssuedInvoice: (invoice: IssuedInvoice) => void;
   onOpenAiExpenseModal: () => void;
   onConvertToInvoice?: (doc: IssuedInvoice) => void;
+  onSelectReceivedInvoice?: (invoice: ReceivedInvoice) => void;
 }
 
 const TAB_OPTIONS: { value: InvoicesTab; label: string }[] = [
@@ -71,6 +73,7 @@ export function InvoicesPage({
   onSelectIssuedInvoice,
   onOpenAiExpenseModal,
   onConvertToInvoice,
+  onSelectReceivedInvoice,
 }: InvoicesPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'Todas' | IssuedInvoiceStatus>('Todas');
@@ -556,7 +559,8 @@ export function InvoicesPage({
                   <th className="py-3.5 px-4 font-medium text-right">Base</th>
                   <th className="py-3.5 px-4 font-medium text-right">IVA</th>
                   <th className="py-3.5 px-4 font-medium text-right">Total</th>
-                  <th className="py-3.5 pl-4 pr-6 font-medium">Estado</th>
+                  <th className="py-3.5 pl-4 pr-3 font-medium">Estado</th>
+                  <th className="py-3.5 pl-2 pr-6 font-medium text-right"><span className="sr-only">Ver / Editar</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/[0.04] text-[14px]">
@@ -565,10 +569,23 @@ export function InvoicesPage({
                   return (
                     <tr
                       key={rec.id}
-                      className="transition-colors hover:bg-[#F5F5F7]/70"
+                      onClick={() => onSelectReceivedInvoice?.(rec)}
+                      className={`transition-colors hover:bg-[#F5F5F7]/70 ${
+                        onSelectReceivedInvoice ? 'cursor-pointer' : ''
+                      }`}
                     >
                       <td className="py-4 pl-6 pr-4 font-mono text-[13px] font-medium text-[#1D1D1F] whitespace-nowrap">
-                        {rec.number}
+                        <div className="flex items-center gap-2">
+                          <span>{rec.number}</span>
+                          {rec.attachmentPath && (
+                            <span
+                              title="Justificante adjunto en almacenamiento privado"
+                              className="inline-flex items-center rounded-md bg-[#0071E3]/[0.08] p-1 text-[#0071E3]"
+                            >
+                              <FileCheck2 className="h-3 w-3" />
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-4 px-4">
                         <p className="font-medium text-[#1D1D1F] truncate max-w-[260px]">
@@ -596,11 +613,24 @@ export function InvoicesPage({
                       <td className="py-4 px-4 text-right font-semibold tabular-nums text-[#1D1D1F] whitespace-nowrap">
                         {formatCurrency(totals.total)}
                       </td>
-                      <td className="py-4 pl-4 pr-6 whitespace-nowrap">
+                      <td className="py-4 pl-4 pr-3 whitespace-nowrap">
                         <StatusBadge
                           label={rec.status}
                           tone={rec.status === 'Contabilizada' ? 'success' : 'warning'}
                         />
+                      </td>
+                      <td className="py-4 pl-2 pr-6 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectReceivedInvoice?.(rec);
+                          }}
+                          aria-label={`Ver o editar gasto ${rec.number}`}
+                          className="flex h-8 w-8 ml-auto items-center justify-center rounded-xl text-[#86868B] transition-colors hover:bg-black/[0.05] hover:text-[#1D1D1F]"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
                       </td>
                     </tr>
                   );

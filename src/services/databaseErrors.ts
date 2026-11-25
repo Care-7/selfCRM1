@@ -24,7 +24,7 @@ export function isValidUuid(str?: string | null): boolean {
  */
 export function mapDatabaseError(
   error: unknown,
-  entity: 'cliente' | 'proveedor' | 'factura' | 'registro' = 'registro'
+  entity: 'cliente' | 'proveedor' | 'factura' | 'gasto' | 'registro' = 'registro'
 ): string {
   if (!error) return 'Error desconocido al procesar la operación.';
 
@@ -37,6 +37,9 @@ export function mapDatabaseError(
   }
 
   if (code === '23505') {
+    if (entity === 'gasto') {
+      return 'Ya existe una factura registrada con este mismo número y proveedor en tu organización.';
+    }
     return `Ya existe un ${entity} con este NIF/CIF en tu organización.`;
   }
   if (code === '23503') {

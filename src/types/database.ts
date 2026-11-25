@@ -217,6 +217,18 @@ export interface Database {
         Update: Partial<IssuedInvoiceRow>;
         Relationships: [];
       };
+      received_invoices: {
+        Row: ReceivedInvoiceRow;
+        Insert: Partial<ReceivedInvoiceRow> & {
+          organization_id: string;
+          supplier_invoice_number: string;
+          tax_base: number;
+          total_amount: number;
+          supplier_snapshot: Json;
+        };
+        Update: Partial<ReceivedInvoiceRow>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -335,4 +347,76 @@ export interface IssueInvoiceAtomicInput {
   converted_from_id?: string | null;
   is_migrated?: boolean;
 }
+
+export type ReceivedInvoicePaymentStatus = 'pending' | 'paid' | 'overdue';
+
+export interface ReceivedInvoiceRow {
+  id: string;
+  organization_id: string;
+  activity_id: string | null;
+  supplier_id: string | null;
+  supplier_snapshot: {
+    name: string;
+    tax_id: string;
+    address?: string;
+    email?: string;
+  };
+  supplier_invoice_number: string;
+  issue_date: string;
+  accounting_date: string;
+  expense_category: string;
+  description: string | null;
+  lines: any[];
+  tax_base: number;
+  vat_rate: number;
+  vat_total: number;
+  irpf_rate: number;
+  irpf_total: number;
+  total_amount: number;
+  deductible_vat_pct: number;
+  deductible_expense_pct: number;
+  payment_status: ReceivedInvoicePaymentStatus;
+  paid_at: string | null;
+  payment_method: string | null;
+  attachment_path: string | null;
+  attachment_name: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateReceivedInvoiceInput {
+  organization_id: string;
+  activity_id?: string | null;
+  supplier_id?: string | null;
+  supplier_snapshot: {
+    name: string;
+    tax_id: string;
+    address?: string;
+    email?: string;
+  };
+  supplier_invoice_number: string;
+  issue_date: string;
+  accounting_date?: string;
+  expense_category?: string;
+  description?: string | null;
+  lines?: any[];
+  tax_base: number;
+  vat_rate?: number;
+  vat_total?: number;
+  irpf_rate?: number;
+  irpf_total?: number;
+  total_amount?: number;
+  deductible_vat_pct?: number;
+  deductible_expense_pct?: number;
+  payment_status?: ReceivedInvoicePaymentStatus;
+  paid_at?: string | null;
+  payment_method?: string | null;
+  attachment_path?: string | null;
+  attachment_name?: string | null;
+  notes?: string | null;
+}
+
+export type UpdateReceivedInvoiceInput = Partial<Omit<CreateReceivedInvoiceInput, 'organization_id'>>;
+
 
