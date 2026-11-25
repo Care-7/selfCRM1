@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { ClientRow, CreateClientInput, UpdateClientInput } from '../types/database';
-import { mapDatabaseError, normalizeTaxId } from './databaseErrors';
+import { mapDatabaseError, normalizeTaxId, isValidUuid } from './databaseErrors';
 
 /**
  * Fetches all clients belonging to the specified organization.
@@ -34,11 +34,13 @@ export async function createClient(input: CreateClientInput): Promise<ClientRow>
     throw new Error('El NIF/CIF del cliente es obligatorio.');
   }
 
+  const sanitizedActivityId = isValidUuid(input.activity_id) ? input.activity_id : null;
+
   const { data, error } = await (supabase
     .from('clients') as any)
     .insert({
       organization_id: input.organization_id,
-      activity_id: input.activity_id || null,
+      activity_id: sanitizedActivityId,
       name: input.name.trim(),
       tax_id: normalizedTaxId,
       email: input.email?.trim() || null,
@@ -86,7 +88,9 @@ export async function updateClient(
     if (!norm) throw new Error('El NIF/CIF no puede estar vacío.');
     updatePayload.tax_id = norm;
   }
-  if (input.activity_id !== undefined) updatePayload.activity_id = input.activity_id;
+  if (input.activity_id !== undefined) {
+    updatePayload.activity_id = isValidUuid(input.activity_id) ? input.activity_id : null;
+  }
   if (input.email !== undefined) updatePayload.email = input.email?.trim() || null;
   if (input.phone !== undefined) updatePayload.phone = input.phone?.trim() || null;
   if (input.address !== undefined) updatePayload.address = input.address?.trim() || null;

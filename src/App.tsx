@@ -7,6 +7,8 @@ import type {
   ContactKind,
   IssuedInvoice,
   IssuedInvoiceStatus,
+  IvaRate,
+  IrpfRate,
   NavSection,
   PeriodFilter,
   ReceivedInvoice,
@@ -28,6 +30,7 @@ import { InvoiceEditorModal } from './components/InvoiceEditorModal';
 import { AiExpenseModal } from './components/AiExpenseModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MigrationWizardModal } from './components/MigrationWizardModal';
+import type { ParsedContactRow } from './utils/csvImport';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { InvoicesPage, type InvoicesTab } from './pages/InvoicesPage';
@@ -55,6 +58,7 @@ import {
   clientRowToContact,
   supplierRowToContact,
 } from './services/contactMappers';
+import { isValidUuid } from './services/databaseErrors';
 
 function MainApp() {
   const {
@@ -84,15 +88,15 @@ function MainApp() {
   const [issuedInvoices, setIssuedInvoices] = useState<IssuedInvoice[]>(() => (isDemo ? INITIAL_ISSUED_INVOICES : []));
   const [receivedInvoices, setReceivedInvoices] = useState<ReceivedInvoice[]>(() => (isDemo ? INITIAL_RECEIVED_INVOICES : []));
 
-  // Reset in-memory state on sign-out / session loss in live mode
+  // Reset in-memory state on sign-out / session loss in live mode (only after initial auth loading completes)
   useEffect(() => {
-    if (isConfigured && !session) {
+    if (isConfigured && !loading && !session) {
       setClients([]);
       setSuppliers([]);
       setIssuedInvoices([]);
       setReceivedInvoices([]);
     }
-  }, [isConfigured, session]);
+  }, [isConfigured, loading, session]);
 
   // Slide-over & modal state
   const [contactModal, setContactModal] = useState<{
@@ -123,9 +127,9 @@ function MainApp() {
     }, 3400);
   };
 
-  // Load real clients and suppliers from Supabase when organization is active
+  // Load real clients and suppliers from Supabase when organization is active and auth loading is done
   useEffect(() => {
-    if (isConfigured && session && organization?.id) {
+    if (isConfigured && !loading && session && organization?.id) {
       let isMounted = true;
       setIsContactsLoading(true);
 
@@ -139,8 +143,12 @@ function MainApp() {
           setSuppliers(suppliersRows.map((r) => supplierRowToContact(r, activities)));
         })
         .catch((err) => {
-          console.error('Error al sincronizar contactos:', err);
-          showToast('No se pudieron sincronizar los contactos de Supabase.');
+          console.error('Error al sincronizar clientes/proveedores desde Supabase:', err);
+          showToast(
+            err instanceof Error
+              ? err.message
+              : 'Error al sincronizar los contactos de Supabase. Revisa tu conexión.'
+          );
         })
         .finally(() => {
           if (isMounted) setIsContactsLoading(false);
@@ -150,7 +158,7 @@ function MainApp() {
         isMounted = false;
       };
     }
-  }, [isConfigured, session, organization?.id, activities]);
+  }, [isConfigured, loading, session, organization?.id, activities]);
 
   const defaultActivity: ActivityType =
     activityFilter === 'Todas las actividades'
@@ -158,11 +166,20 @@ function MainApp() {
       : activityFilter;
 
   const handleSaveContact = async (saved: Contact, isNew: boolean) => {
-    if (isConfigured && session && organization?.id) {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa o sesión válida en Supabase. Espera o recarga la página.');
+      }
+
+      const matchedActivity = activities.find(
+        (a) => a.id === saved.activityId || a.name === saved.activity
+      );
       const targetActivityId =
-        saved.activityId ||
-        activities.find((a) => a.name === saved.activity)?.id ||
-        null;
+        matchedActivity && isValidUuid(matchedActivity.id)
+          ? matchedActivity.id
+          : isValidUuid(saved.activityId)
+          ? saved.activityId!
+          : null;
 
       if (saved.kind === 'cliente') {
         if (isNew) {
@@ -179,9 +196,10 @@ function MainApp() {
             notes: saved.notes || null,
             is_active: saved.status === 'Activo',
           });
+          // ONLY mutate local state on confirmed database persistence
           const mapped = clientRowToContact(row, activities);
           setClients((prev) => [mapped, ...prev]);
-          showToast(`Cliente «${mapped.name}» registrado en Supabase.`);
+          showToast(`Cliente «${mapped.name}» guardado en Supabase.`);
         } else {
           const row = await updateClient(saved.id, organization.id, {
             activity_id: targetActivityId,
@@ -195,6 +213,7 @@ function MainApp() {
             notes: saved.notes || null,
             is_active: saved.status === 'Activo',
           });
+          // ONLY mutate local state on confirmed database persistence
           const mapped = clientRowToContact(row, activities);
           setClients((prev) => prev.map((c) => (c.id === saved.id ? mapped : c)));
           showToast(`Ficha de «${mapped.name}» actualizada en Supabase.`);
@@ -214,9 +233,10 @@ function MainApp() {
             notes: saved.notes || null,
             is_active: saved.status === 'Activo',
           });
+          // ONLY mutate local state on confirmed database persistence
           const mapped = supplierRowToContact(row, activities);
           setSuppliers((prev) => [mapped, ...prev]);
-          showToast(`Proveedor «${mapped.name}» registrado en Supabase.`);
+          showToast(`Proveedor «${mapped.name}» guardado en Supabase.`);
         } else {
           const row = await updateSupplier(saved.id, organization.id, {
             activity_id: targetActivityId,
@@ -230,13 +250,14 @@ function MainApp() {
             notes: saved.notes || null,
             is_active: saved.status === 'Activo',
           });
+          // ONLY mutate local state on confirmed database persistence
           const mapped = supplierRowToContact(row, activities);
           setSuppliers((prev) => prev.map((s) => (s.id === saved.id ? mapped : s)));
           showToast(`Ficha de «${mapped.name}» actualizada en Supabase.`);
         }
       }
     } else {
-      // In-memory demo mode fallback
+      // In-memory demo mode fallback (strictly when isSupabaseConfigured === false)
       if (saved.kind === 'cliente') {
         setClients((prev) =>
           isNew ? [saved, ...prev] : prev.map((c) => (c.id === saved.id ? saved : c))
@@ -252,7 +273,10 @@ function MainApp() {
   };
 
   const handleDeleteContact = async (id: string, kind: ContactKind) => {
-    if (isConfigured && session && organization?.id) {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa en Supabase.');
+      }
       if (kind === 'cliente') {
         await deleteClient(id, organization.id);
         setClients((prev) => prev.filter((c) => c.id !== id));
@@ -274,7 +298,10 @@ function MainApp() {
 
   const handleArchiveContact = async (id: string, kind: ContactKind, nextActive: boolean) => {
     const statusLabel = nextActive ? 'Activo' : 'Inactivo';
-    if (isConfigured && session && organization?.id) {
+    if (isConfigured) {
+      if (!session || !organization?.id) {
+        throw new Error('No hay una organización activa en Supabase.');
+      }
       if (kind === 'cliente') {
         const updated = await archiveClient(id, organization.id, nextActive);
         const mapped = clientRowToContact(updated, activities);
@@ -368,14 +395,139 @@ function MainApp() {
     showToast(`Gasto ${expense.number} contabilizado en el Libro Diario.`);
   };
 
-  const handleImportClients = (newClients: Contact[]) => {
-    setClients((prev) => [...newClients, ...prev]);
-    showToast(`${newClients.length} clientes importados correctamente.`);
+  const handleImportClients = async (newClients: ParsedContactRow[]) => {
+    if (isConfigured && organization) {
+      let imported = 0;
+      let skipped = 0;
+
+      for (const row of newClients) {
+        try {
+          await createClient({
+            organization_id: organization.id,
+            name: row.name,
+            tax_id: row.tax_id,
+            email: row.email || null,
+            phone: row.phone || null,
+            address: row.address || null,
+            city: row.city || null,
+            postal_code: row.postal_code || null,
+            country: row.country || 'ES',
+            default_vat_rate: row.default_vat_rate,
+            default_irpf_rate: row.default_irpf_rate,
+            iban: row.iban || null,
+            payment_terms: row.payment_terms || null,
+            notes: row.notes || 'Importado vía Asistente de Migración',
+            is_active: true,
+          });
+          imported++;
+        } catch (err: any) {
+          skipped++;
+          console.warn(`Omitido cliente ${row.name} (${row.tax_id}):`, err.message);
+        }
+      }
+
+      // Reload fresh list from Supabase
+      const freshRows = await listClients(organization.id);
+      setClients(freshRows.map((r) => clientRowToContact(r, activities)));
+
+      showToast(
+        `Se han importado ${imported} clientes en Supabase${
+          skipped > 0 ? ` (${skipped} omitidos por duplicado)` : ''
+        }.`
+      );
+      return { imported, skipped };
+    } else {
+      const defaultActivity = (activities[0]?.name as ActivityType) || 'Contabilidad Comunidades';
+      const mappedContacts: Contact[] = newClients.map((row, idx) => ({
+        id: `cli-mig-${Date.now()}-${idx}`,
+        kind: 'cliente',
+        name: row.name,
+        nif: row.tax_id,
+        email: row.email || '',
+        phone: row.phone || undefined,
+        address: row.address || '',
+        city: row.city || undefined,
+        postalCode: row.postal_code || undefined,
+        activity: defaultActivity,
+        defaultIva: (row.default_vat_rate != null ? Number(row.default_vat_rate) : 21) as IvaRate,
+        defaultIrpf: (row.default_irpf_rate != null ? Number(row.default_irpf_rate) : 0) as IrpfRate,
+        iban: row.iban || undefined,
+        paymentTerms: row.payment_terms || undefined,
+        notes: row.notes || 'Importado vía Asistente de Migración',
+        historicalVolume: 0,
+        status: 'Activo',
+      }));
+      setClients((prev) => [...mappedContacts, ...prev]);
+      showToast(`${mappedContacts.length} clientes importados en modo demo.`);
+      return { imported: mappedContacts.length, skipped: 0 };
+    }
   };
 
-  const handleImportSuppliers = (newSuppliers: Contact[]) => {
-    setSuppliers((prev) => [...newSuppliers, ...prev]);
-    showToast(`${newSuppliers.length} proveedores importados correctamente.`);
+  const handleImportSuppliers = async (newSuppliers: ParsedContactRow[]) => {
+    if (isConfigured && organization) {
+      let imported = 0;
+      let skipped = 0;
+
+      for (const row of newSuppliers) {
+        try {
+          await createSupplier({
+            organization_id: organization.id,
+            name: row.name,
+            tax_id: row.tax_id,
+            email: row.email || null,
+            phone: row.phone || null,
+            address: row.address || null,
+            city: row.city || null,
+            postal_code: row.postal_code || null,
+            country: row.country || 'ES',
+            default_vat_rate: row.default_vat_rate,
+            default_irpf_rate: row.default_irpf_rate,
+            iban: row.iban || null,
+            notes: row.notes || 'Importado vía Asistente de Migración',
+            is_active: true,
+          });
+          imported++;
+        } catch (err: any) {
+          skipped++;
+          console.warn(`Omitido proveedor ${row.name} (${row.tax_id}):`, err.message);
+        }
+      }
+
+      // Reload fresh list from Supabase
+      const freshRows = await listSuppliers(organization.id);
+      setSuppliers(freshRows.map((r) => supplierRowToContact(r, activities)));
+
+      showToast(
+        `Se han importado ${imported} proveedores en Supabase${
+          skipped > 0 ? ` (${skipped} omitidos por duplicado)` : ''
+        }.`
+      );
+      return { imported, skipped };
+    } else {
+      const defaultActivity = (activities[0]?.name as ActivityType) || 'Contabilidad Comunidades';
+      const mappedContacts: Contact[] = newSuppliers.map((row, idx) => ({
+        id: `sup-mig-${Date.now()}-${idx}`,
+        kind: 'proveedor',
+        name: row.name,
+        nif: row.tax_id,
+        email: row.email || '',
+        phone: row.phone || undefined,
+        address: row.address || '',
+        city: row.city || undefined,
+        postalCode: row.postal_code || undefined,
+        activity: defaultActivity,
+        defaultIva: (row.default_vat_rate != null ? Number(row.default_vat_rate) : 21) as IvaRate,
+        defaultIrpf: (row.default_irpf_rate != null ? Number(row.default_irpf_rate) : 0) as IrpfRate,
+        iban: row.iban || undefined,
+        paymentTerms: row.payment_terms || undefined,
+        notes: row.notes || 'Importado vía Asistente de Migración',
+        historicalVolume: 0,
+        status: 'Activo',
+      }));
+      setSuppliers((prev) => [...mappedContacts, ...prev]);
+      showToast(`${mappedContacts.length} proveedores importados en modo demo.`);
+      return { imported: mappedContacts.length, skipped: 0 };
+    }
   };
 
   const handleImportInvoices = (newInvoices: IssuedInvoice[]) => {

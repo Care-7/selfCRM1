@@ -12,6 +12,14 @@ export function normalizeTaxId(raw: string): string {
 }
 
 /**
+ * Validates whether a given string is a valid UUIDv4 / UUID format.
+ */
+export function isValidUuid(str?: string | null): boolean {
+  if (!str || typeof str !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
+/**
  * Translates PostgreSQL and Supabase error codes into user-friendly Spanish messages.
  */
 export function mapDatabaseError(
@@ -34,6 +42,12 @@ export function mapDatabaseError(
   }
   if (code === '23514') {
     return 'Uno de los valores proporcionados no cumple con las restricciones requeridas.';
+  }
+  if (code === '42P01') {
+    return `La tabla de ${entity === 'cliente' ? 'clientes' : entity === 'proveedor' ? 'proveedores' : 'datos'} no existe en la base de datos. Aplica las migraciones de Supabase.`;
+  }
+  if (code === '22P02') {
+    return 'Formato de identificador (UUID) o valor numérico no válido.';
   }
 
   return err.message || 'Error en la base de datos al realizar la operación.';

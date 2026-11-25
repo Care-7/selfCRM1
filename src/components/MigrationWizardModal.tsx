@@ -12,19 +12,30 @@ import {
   Sparkles,
   FileSpreadsheet,
   AlertCircle,
-  Clock,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
-import type { Contact, IssuedInvoice, NavSection } from '../types';
-import { REFERENCE_DATE } from '../data/mockData';
+import type { IssuedInvoice, NavSection } from '../types';
+import {
+  parseAndValidateContactsCsv,
+  generateCsvTemplate,
+  type CsvImportResult,
+  type ParsedContactRow,
+} from '../utils/csvImport';
 
 export type MigrationEntity = 'clientes' | 'proveedores' | 'facturas';
 export type MigrationSource = 'excel' | 'holded' | 'quipu' | 'facturadirecta' | 'otro';
 
+export interface ImportSummaryResult {
+  imported: number;
+  skipped: number;
+}
+
 interface MigrationWizardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImportClients: (newClients: Contact[]) => void;
-  onImportSuppliers: (newSuppliers: Contact[]) => void;
+  onImportClients: (newClients: ParsedContactRow[]) => Promise<ImportSummaryResult | void> | void;
+  onImportSuppliers: (newSuppliers: ParsedContactRow[]) => Promise<ImportSummaryResult | void> | void;
   onImportInvoices: (newInvoices: IssuedInvoice[]) => void;
   onNavigateSection: (section: NavSection) => void;
 }
@@ -42,7 +53,6 @@ export function MigrationWizardModal({
   onClose,
   onImportClients,
   onImportSuppliers,
-  onImportInvoices,
   onNavigateSection,
 }: MigrationWizardModalProps) {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
@@ -52,6 +62,12 @@ export function MigrationWizardModal({
   const [isDragging, setIsDragging] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // Parsed CSV result
+  const [csvResult, setCsvResult] = useState<CsvImportResult | null>(null);
 
   if (!isOpen) return null;
 
@@ -63,6 +79,10 @@ export function MigrationWizardModal({
     setIsDragging(false);
     setIsSuccess(false);
     setImportedCount(0);
+    setSkippedCount(0);
+    setIsImporting(false);
+    setImportError(null);
+    setCsvResult(null);
   };
 
   const handleClose = () => {
@@ -70,27 +90,10 @@ export function MigrationWizardModal({
     onClose();
   };
 
-  // Step 2 actions: Download template
+  // Step 2: Download official CSV template
   const handleDownloadTemplate = () => {
-    let csvContent = '';
-    let downloadName = '';
-
-    if (entity === 'clientes') {
-      csvContent = 'Razon_Social,NIF_CIF,Email,Direccion,Actividad,Tipo_IVA_Habitual\n' +
-        '"Asociación Cultural Bellas Artes Madrid","G28491823","contacto@culturamadridartes.es","C/ Serrano 54, Madrid","Actividad Artística",10\n' +
-        '"Comunidad Residencial Puerta de Hierro","H28192847","administracion@puertahierro12.org","C/ Puerta de Hierro 12, Madrid","Contabilidad Comunidades",21';
-      downloadName = 'plantilla_migracion_clientes.csv';
-    } else if (entity === 'proveedores') {
-      csvContent = 'Razon_Social,NIF_CIF,Email,Direccion,Actividad,Cuenta_PGC_Gasto\n' +
-        '"Papelería Técnica & Bellas Artes Minerva","B82910483","pedidos@minervabellasartes.es","C/ Barquillo 19, Madrid","Actividad Artística",602\n' +
-        '"Servicios Informáticos FincasNet S.L.","B85910284","facturacion@fincasnet.es","Av. Brasil 14, Madrid","Contabilidad Comunidades",629';
-      downloadName = 'plantilla_migracion_proveedores.csv';
-    } else {
-      csvContent = 'Numero_Factura,Cliente_NIF,Cliente_Nombre,Fecha_Emision,Fecha_Vencimiento,Concepto,Base_Imponible,Tipo_IVA,Retencion_IRPF,Actividad\n' +
-        '"HIST-2025-089","H28491023","Comunidad de Propietarios C/ Alcalá 42","2025-11-15","2025-12-15","Honorarios administración ejercicio anterior",950,21,15,"Contabilidad Comunidades"\n' +
-        '"HIST-2025-090","B87312940","Galería Espacio Norte S.L.","2025-12-02","2026-01-02","Venta obra histórica catálogo 2025",1800,10,15,"Actividad Artística"';
-      downloadName = 'plantilla_migracion_facturas_historicas.csv';
-    }
+    const csvContent = generateCsvTemplate(entity);
+    const downloadName = `plantilla_migracion_${entity}.csv`;
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -103,25 +106,41 @@ export function MigrationWizardModal({
     URL.revokeObjectURL(url);
   };
 
+  const processCsvContent = (content: string, name: string) => {
+    setImportError(null);
+    const result = parseAndValidateContactsCsv(
+      content,
+      entity === 'clientes' ? 'cliente' : 'proveedor'
+    );
+    setCsvResult(result);
+    setFileName(name);
+    setCurrentStep(3);
+  };
+
   // Step 2: Simulate sample file
   const handleSimulateSample = () => {
     const sourceLabel = SOURCES.find((s) => s.id === source)?.name ?? 'Export';
     const sampleFileName =
       entity === 'clientes'
         ? `clientes_${sourceLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}_2026.csv`
-        : entity === 'proveedores'
-        ? `proveedores_${sourceLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}_2026.csv`
-        : `facturas_historicas_${sourceLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}.xlsx`;
+        : `proveedores_${sourceLabel.toLowerCase().replace(/[^a-z0-9]/g, '_')}_2026.csv`;
 
-    setFileName(sampleFileName);
-    setCurrentStep(3);
+    const templateContent = generateCsvTemplate(entity);
+    processCsvContent(templateContent, sampleFileName);
   };
 
-  // File drop / input upload
+  // File upload handlers
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFileName(e.target.files[0].name);
-      setCurrentStep(3);
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const text = evt.target?.result as string;
+        if (text) {
+          processCsvContent(text, file.name);
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
     }
   };
 
@@ -129,221 +148,53 @@ export function MigrationWizardModal({
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFileName(e.dataTransfer.files[0].name);
-      setCurrentStep(3);
+      const file = e.dataTransfer.files[0];
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const text = evt.target?.result as string;
+        if (text) {
+          processCsvContent(text, file.name);
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
     } else {
       handleSimulateSample();
     }
   };
 
-  // Step 3: Column mapping definitions
-  const columnMappings = {
-    clientes: [
-      { sourceCol: 'Razon_Social / Nombre', targetField: 'Nombre completo o razón social', confidence: '100%' },
-      { sourceCol: 'CIF_NIF', targetField: 'NIF / CIF', confidence: '100%' },
-      { sourceCol: 'Email_Contacto', targetField: 'Email de facturación', confidence: '98%' },
-      { sourceCol: 'Direccion_Fiscal', targetField: 'Domicilio fiscal', confidence: '95%' },
-      { sourceCol: 'Tipo_Actividad', targetField: 'Actividad (Comunidades / Arte)', confidence: '99%' },
-      { sourceCol: 'IVA_Defecto', targetField: 'Tipo de IVA habitual (21% / 10%)', confidence: '96%' },
-    ],
-    proveedores: [
-      { sourceCol: 'Nombre_Fiscal', targetField: 'Nombre o razón social', confidence: '100%' },
-      { sourceCol: 'CIF_Proveedor', targetField: 'NIF / CIF', confidence: '100%' },
-      { sourceCol: 'Email_Facturacion', targetField: 'Email de contacto', confidence: '97%' },
-      { sourceCol: 'Direccion', targetField: 'Domicilio fiscal', confidence: '95%' },
-      { sourceCol: 'Cuenta_Gasto_PGC', targetField: 'Cuenta contable PGC (602 / 629)', confidence: '100%' },
-    ],
-    facturas: [
-      { sourceCol: 'Numero_Factura', targetField: 'Número documental', confidence: '100%' },
-      { sourceCol: 'Cliente_NIF', targetField: 'NIF del cliente', confidence: '100%' },
-      { sourceCol: 'Fecha_Emision', targetField: 'Fecha de emisión', confidence: '100%' },
-      { sourceCol: 'Base_Imponible', targetField: 'Base imponible (€)', confidence: '100%' },
-      { sourceCol: 'Tipo_IVA', targetField: 'Tipo de IVA (%)', confidence: '99%' },
-      { sourceCol: 'Total_Factura', targetField: 'Total cobrado (€)', confidence: '100%' },
-    ],
-  };
-
-  // Simulated records to inject
-  const handleConfirmImport = () => {
-    if (entity === 'clientes') {
-      const mockClients: Contact[] = [
-        {
-          id: `cli-mig-${Date.now()}-1`,
-          kind: 'cliente',
-          name: 'Asociación Cultural Bellas Artes Madrid',
-          nif: 'G28491823',
-          email: 'contacto@culturamadridartes.es',
-          address: 'C/ Serrano 54, 28001 Madrid',
-          activity: 'Actividad Artística',
-          defaultIva: 10,
-          defaultIrpf: 15,
-          status: 'Activo',
-          historicalVolume: 3450,
-          notes: 'Importado vía Asistente de Migración',
-        },
-        {
-          id: `cli-mig-${Date.now()}-2`,
-          kind: 'cliente',
-          name: 'Comunidad Residencial Puerta de Hierro 12',
-          nif: 'H28192847',
-          email: 'administracion@puertahierro12.org',
-          address: 'C/ Puerta de Hierro 12, 28035 Madrid',
-          activity: 'Contabilidad Comunidades',
-          defaultIva: 21,
-          defaultIrpf: 15,
-          status: 'Activo',
-          historicalVolume: 4200,
-          notes: 'Importado vía Asistente de Migración',
-        },
-        {
-          id: `cli-mig-${Date.now()}-3`,
-          kind: 'cliente',
-          name: 'Espacio Creativo Malasaña S.L.',
-          nif: 'B86928174',
-          email: 'hola@espaciomalasana.com',
-          address: 'C/ del Pez 22, 28004 Madrid',
-          activity: 'Actividad Artística',
-          defaultIva: 21,
-          defaultIrpf: 15,
-          status: 'Activo',
-          historicalVolume: 1800,
-          notes: 'Importado vía Asistente de Migración',
-        },
-      ];
-      onImportClients(mockClients);
-      setImportedCount(mockClients.length);
-    } else if (entity === 'proveedores') {
-      const mockSuppliers: Contact[] = [
-        {
-          id: `sup-mig-${Date.now()}-1`,
-          kind: 'proveedor',
-          name: 'Papelería Técnica & Bellas Artes Minerva S.L.',
-          nif: 'B82910483',
-          email: 'pedidos@minervabellasartes.es',
-          address: 'C/ Barquillo 19, 28004 Madrid',
-          activity: 'Actividad Artística',
-          defaultIva: 21,
-          defaultIrpf: 0,
-          status: 'Activo',
-          historicalVolume: 920,
-          notes: 'Importado vía Asistente de Migración',
-        },
-        {
-          id: `sup-mig-${Date.now()}-2`,
-          kind: 'proveedor',
-          name: 'Servicios Informáticos FincasNet S.L.',
-          nif: 'B85910284',
-          email: 'facturacion@fincasnet.es',
-          address: 'Av. Brasil 14, 28020 Madrid',
-          activity: 'Contabilidad Comunidades',
-          defaultIva: 21,
-          defaultIrpf: 0,
-          status: 'Activo',
-          historicalVolume: 1450,
-          notes: 'Importado vía Asistente de Migración',
-        },
-        {
-          id: `sup-mig-${Date.now()}-3`,
-          kind: 'proveedor',
-          name: 'Asesoría Jurídica LexFincas S.L.P.',
-          nif: 'B89104829',
-          email: 'admin@lexfincas.com',
-          address: 'C/ Goya 45, 28001 Madrid',
-          activity: 'Contabilidad Comunidades',
-          defaultIva: 21,
-          defaultIrpf: 15,
-          status: 'Activo',
-          historicalVolume: 2100,
-          notes: 'Importado vía Asistente de Migración',
-        },
-      ];
-      onImportSuppliers(mockSuppliers);
-      setImportedCount(mockSuppliers.length);
-    } else {
-      const mockInvoices: IssuedInvoice[] = [
-        {
-          id: `inv-mig-${Date.now()}-1`,
-          number: 'HIST-2025-089',
-          series: 'HIST',
-          documentType: 'normal',
-          clientId: 'cli-1',
-          clientName: 'Comunidad de Propietarios C/ Alcalá 42',
-          clientNif: 'H28491023',
-          activity: 'Contabilidad Comunidades',
-          issueDate: '2025-11-15',
-          dueDate: '2025-12-15',
-          lines: [
-            {
-              id: `lm-1`,
-              description: 'Honorarios administración ejercicio anterior (Histórico)',
-              quantity: 1,
-              unitPrice: 950,
-            },
-          ],
-          ivaRate: 21,
-          irpfRate: 15,
-          status: 'Cobrada',
-          veriFactuLocked: false,
-        },
-        {
-          id: `inv-mig-${Date.now()}-2`,
-          number: 'HIST-2025-090',
-          series: 'HIST',
-          documentType: 'normal',
-          clientId: 'cli-2',
-          clientName: 'Galería Espacio Norte S.L.',
-          clientNif: 'B87312940',
-          activity: 'Actividad Artística',
-          issueDate: '2025-12-02',
-          dueDate: '2026-01-02',
-          lines: [
-            {
-              id: `lm-2`,
-              description: 'Venta obra histórica catálogo 2025 (Histórico)',
-              quantity: 1,
-              unitPrice: 1800,
-            },
-          ],
-          ivaRate: 10,
-          irpfRate: 15,
-          status: 'Cobrada',
-          veriFactuLocked: false,
-        },
-        {
-          id: `inv-mig-${Date.now()}-3`,
-          number: 'HIST-2026-001',
-          series: 'HIST',
-          documentType: 'normal',
-          clientId: 'cli-3',
-          clientName: 'Comunidad Residencial Retiro Sur',
-          clientNif: 'H28910455',
-          activity: 'Contabilidad Comunidades',
-          issueDate: '2026-01-10',
-          dueDate: '2026-02-10',
-          lines: [
-            {
-              id: `lm-3`,
-              description: 'Liquidación presupuestaria extraordinaria (Histórico)',
-              quantity: 1,
-              unitPrice: 750,
-            },
-          ],
-          ivaRate: 21,
-          irpfRate: 15,
-          status: 'Cobrada',
-          veriFactuLocked: false,
-        },
-      ];
-      onImportInvoices(mockInvoices);
-      setImportedCount(mockInvoices.length);
+  // Step 3: Confirm and execute import
+  const handleConfirmImport = async () => {
+    if (!csvResult || csvResult.validRows.length === 0) {
+      setImportError('No hay registros válidos para importar.');
+      return;
     }
 
-    setIsSuccess(true);
+    setIsImporting(true);
+    setImportError(null);
+
+    try {
+      let result: ImportSummaryResult | void = undefined;
+      if (entity === 'clientes') {
+        result = await onImportClients(csvResult.validRows);
+      } else if (entity === 'proveedores') {
+        result = await onImportSuppliers(csvResult.validRows);
+      }
+
+      const totalImported = result ? result.imported : csvResult.validRows.length;
+      const totalSkipped = result ? result.skipped : 0;
+
+      setImportedCount(totalImported);
+      setSkippedCount(totalSkipped);
+      setIsSuccess(true);
+    } catch (err: any) {
+      setImportError(err.message || 'Error durante la importación de datos.');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleNavigateToResult = () => {
-    const targetSection: NavSection =
-      entity === 'clientes' ? 'clientes' : entity === 'proveedores' ? 'proveedores' : 'facturas';
+    const targetSection: NavSection = entity === 'clientes' ? 'clientes' : 'proveedores';
     onNavigateSection(targetSection);
     handleClose();
   };
@@ -376,7 +227,7 @@ export function MigrationWizardModal({
                 Asistente de migración de datos
               </h2>
               <p className="text-[12px] text-[#6E6E73]">
-                Importa registros históricos desde otras plataformas contables
+                Importa clientes y proveedores con validación fiscal de NIF/CIF en tiempo real
               </p>
             </div>
           </div>
@@ -428,7 +279,7 @@ export function MigrationWizardModal({
                 3
               </span>
               <span className={currentStep === 3 ? 'font-semibold text-[#1D1D1F]' : ''}>
-                Mapeo IA y confirmación
+                Validación y confirmación
               </span>
             </div>
           </div>
@@ -446,9 +297,12 @@ export function MigrationWizardModal({
                 ¡Migración completada con éxito!
               </h3>
               <p className="mt-1.5 text-[14px] text-[#6E6E73] max-w-md">
-                Se han importado correctamente <strong>{importedCount} registros</strong> en tu cuenta de SelfSME.
-                {entity === 'facturas' &&
-                  ' Las facturas históricas han quedado registradas para análisis estadísticos sin vincularse a VeriFactu.'}
+                Se han importado correctamente <strong>{importedCount} {entity}</strong> en tu organización de SelfSME.
+                {skippedCount > 0 && (
+                  <span className="block mt-1 text-[#86868B] text-[13px]">
+                    ({skippedCount} contactos fueron omitidos por existir previamente en la base de datos).
+                  </span>
+                )}
               </p>
 
               <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -457,7 +311,7 @@ export function MigrationWizardModal({
                   onClick={handleNavigateToResult}
                   className="rounded-xl bg-[#0071E3] px-5 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] hover:bg-[#0077ED] transition-colors"
                 >
-                  Ver {entity === 'clientes' ? 'Clientes' : entity === 'proveedores' ? 'Proveedores' : 'Facturas'} importados
+                  Ver {entity === 'clientes' ? 'Clientes' : 'Proveedores'} en el sistema
                 </button>
                 <button
                   type="button"
@@ -494,7 +348,7 @@ export function MigrationWizardModal({
                     </span>
                     <p className="text-[14px] font-semibold text-[#1D1D1F]">Clientes</p>
                     <p className="text-[12px] text-[#6E6E73] mt-0.5">
-                      Cartera de clientes, NIF, contactos y condiciones de IVA.
+                      Cartera de clientes, NIF verificado, contactos y tipos de IVA.
                     </p>
                   </button>
 
@@ -516,26 +370,31 @@ export function MigrationWizardModal({
                     </span>
                     <p className="text-[14px] font-semibold text-[#1D1D1F]">Proveedores</p>
                     <p className="text-[12px] text-[#6E6E73] mt-0.5">
-                      Proveedores recurrentes y cuentas de gasto contable PGC.
+                      Proveedores recurrentes, NIF/CIF y condiciones de pago.
                     </p>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setEntity('facturas')}
-                    className={`flex flex-col items-start p-4 rounded-2xl text-left transition-all ${
+                    className={`relative flex flex-col items-start p-4 rounded-2xl text-left transition-all ${
                       entity === 'facturas'
                         ? 'bg-white border-2 border-[#0071E3] shadow-[0_4px_16px_rgba(0,113,227,0.12)]'
                         : 'bg-[#F5F5F7] border border-transparent hover:bg-black/[0.04]'
                     }`}
                   >
-                    <span
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl mb-3 ${
-                        entity === 'facturas' ? 'bg-[#0071E3] text-white' : 'bg-white text-[#6E6E73]'
-                      }`}
-                    >
-                      <FileText className="h-5 w-5" />
-                    </span>
+                    <div className="flex w-full items-start justify-between">
+                      <span
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl mb-3 ${
+                          entity === 'facturas' ? 'bg-[#0071E3] text-white' : 'bg-white text-[#6E6E73]'
+                        }`}
+                      >
+                        <FileText className="h-5 w-5" />
+                      </span>
+                      <span className="rounded-full bg-[#0071E3]/10 px-2 py-0.5 text-[10px] font-semibold text-[#0071E3]">
+                        Disponible en Fase 2
+                      </span>
+                    </div>
                     <p className="text-[14px] font-semibold text-[#1D1D1F]">Facturas históricas</p>
                     <p className="text-[12px] text-[#6E6E73] mt-0.5">
                       Ventas de ejercicios anteriores para análisis comparativo.
@@ -549,7 +408,7 @@ export function MigrationWizardModal({
                 <div className="flex items-start gap-3 rounded-2xl bg-[#FFF4E5] p-3.5 text-[13px] text-[#B25E09] border border-[#B25E09]/10">
                   <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
                   <p className="leading-relaxed">
-                    <strong>Nota fiscal:</strong> Las facturas importadas se guardarán como histórico para estadísticas y nunca se enviarán a VeriFactu.
+                    <strong>Fase 2:</strong> La importación de facturas históricas se habilitará en la siguiente fase tras la persistencia completa del módulo de facturación en Supabase.
                   </p>
                 </div>
               )}
@@ -574,7 +433,7 @@ export function MigrationWizardModal({
                   </select>
                 </div>
                 <p className="text-[12px] text-[#6E6E73] mt-1.5">
-                  SelfSME adaptará los nombres de columna y formatos de fecha/moneda según el software de origen.
+                  El sistema autodecta cabeceras estándar en español e inglés y delimitadores punto y coma (;) o comas (,).
                 </p>
               </div>
             </div>
@@ -586,7 +445,7 @@ export function MigrationWizardModal({
                   Sube el archivo de exportación de {SOURCES.find((s) => s.id === source)?.name}
                 </p>
                 <p className="text-[12px] text-[#6E6E73]">
-                  Formatos admitidos: archivos delimitados por comas (`.csv`) o libros Excel (`.xlsx`).
+                  Formatos admitidos: archivos delimitados por comas o punto y coma (`.csv`) con codificación UTF-8.
                 </p>
               </div>
 
@@ -608,7 +467,7 @@ export function MigrationWizardModal({
                   <FileSpreadsheet className="h-6 w-6" aria-hidden="true" />
                 </span>
                 <p className="mt-3 text-[14px] font-medium text-[#1D1D1F]">
-                  Arrastra aquí tu archivo .csv o .xlsx
+                  Arrastra aquí tu archivo .csv
                 </p>
                 <p className="mt-0.5 text-[12px] text-[#6E6E73]">
                   o selecciona un archivo desde tu equipo
@@ -617,7 +476,7 @@ export function MigrationWizardModal({
                   <span>Examinar equipo</span>
                   <input
                     type="file"
-                    accept=".csv, .xlsx, .xls"
+                    accept=".csv, text/csv"
                     onChange={handleFileUpload}
                     className="sr-only"
                   />
@@ -639,7 +498,7 @@ export function MigrationWizardModal({
                 <button
                   type="button"
                   onClick={handleSimulateSample}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3]/[0.09] px-4 py-2.5 text-[13px] font-medium text-[#0071E3] hover:bg-[#0071E3]/[0.18] transition-colors"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3]/[0.09] px-4 py-2.5 text-[13px] font-medium text-[#0071E3] hover:bg-[#0077ED]/[0.18] transition-colors"
                 >
                   <Sparkles className="h-4 w-4" />
                   Simular archivo de ejemplo (1 clic)
@@ -647,134 +506,131 @@ export function MigrationWizardModal({
               </div>
             </div>
           ) : (
-            /* Step 3: AI Column Mapping & Review */
+            /* Step 3: Column Mapping & Validation Review */
             <div className="space-y-6">
+              {importError && (
+                <div className="flex items-center gap-2 rounded-xl bg-[#FFF2F0] p-3 text-[13px] text-[#D93025] border border-[#D93025]/20">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{importError}</span>
+                </div>
+              )}
+
+              {/* Summary Stats Pill */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-[#F5F5F7] p-3.5 rounded-2xl">
                 <div>
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-[#0071E3]" />
                     <span className="text-[13px] font-semibold text-[#1D1D1F]">
-                      Mapeo automático de columnas con IA
+                      Validación de estructura y NIFs
                     </span>
                   </div>
                   <p className="text-[12px] text-[#6E6E73] mt-0.5">
                     Archivo analizado: <span className="font-mono text-[#1D1D1F]">{fileName}</span>
                   </p>
                 </div>
-                <span className="inline-flex items-center gap-1.5 self-start sm:self-auto rounded-lg bg-[#E8F8EE] px-2.5 py-1 text-[12px] font-semibold text-[#1D7A3F]">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  3 registros listos · 0 errores
-                </span>
+                {csvResult && (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#E8F8EE] px-2.5 py-1 text-[12px] font-semibold text-[#1D7A3F] tabular-nums">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {csvResult.summary.valid} válidos
+                    </span>
+                    {csvResult.summary.invalid > 0 && (
+                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FFF2F0] px-2.5 py-1 text-[12px] font-semibold text-[#D93025] tabular-nums">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {csvResult.summary.invalid} con error
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* Column Mapping Table */}
-              <div className="overflow-hidden rounded-xl border border-black/[0.05] bg-white">
-                <table className="w-full text-left text-[13px] border-collapse">
-                  <thead>
-                    <tr className="border-b border-black/[0.05] bg-[#FBFBFD] text-[11px] font-medium text-[#6E6E73]">
-                      <th className="py-2.5 px-4">Columna detectada en origen</th>
-                      <th className="py-2.5 px-4">Campo en SelfSME</th>
-                      <th className="py-2.5 px-4 text-right">Coincidencia</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-black/[0.04]">
-                    {columnMappings[entity].map((col, idx) => (
-                      <tr key={idx} className="hover:bg-[#F5F5F7]/50 transition-colors">
-                        <td className="py-2.5 px-4 font-mono text-[12px] text-[#1D1D1F]">
-                          {col.sourceCol}
-                        </td>
-                        <td className="py-2.5 px-4 font-medium text-[#0071E3]">
-                          {col.targetField}
-                        </td>
-                        <td className="py-2.5 px-4 text-right">
-                          <span className="inline-flex items-center rounded-md bg-[#E8F8EE] px-1.5 py-0.5 text-[11px] font-medium text-[#1D7A3F]">
-                            {col.confidence}
-                          </span>
-                        </td>
-                      </tr>
+              {/* Errors Breakdown (if any) */}
+              {csvResult && csvResult.invalidRows.length > 0 && (
+                <div className="rounded-xl border border-[#D93025]/20 bg-[#FFF2F0] p-3.5 space-y-2">
+                  <div className="flex items-center gap-2 text-[#D93025] font-semibold text-[13px]">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      {csvResult.invalidRows.length} fila(s) omitida(s) por no cumplir la normativa fiscal:
+                    </span>
+                  </div>
+                  <div className="max-h-28 overflow-y-auto space-y-1 pr-1 text-[12px] text-[#B3261E]">
+                    {csvResult.invalidRows.map((inv, idx) => (
+                      <div key={idx} className="bg-white/80 px-2.5 py-1 rounded-lg">
+                        <strong>Fila {inv.rowNumber}:</strong> {inv.reason}
+                      </div>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Column Mapping Table */}
+              {csvResult && csvResult.detectedColumns.length > 0 && (
+                <div className="overflow-hidden rounded-xl border border-black/[0.05] bg-white">
+                  <table className="w-full text-left text-[13px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-black/[0.05] bg-[#FBFBFD] text-[11px] font-medium text-[#6E6E73]">
+                        <th className="py-2.5 px-4">Columna detectada en origen</th>
+                        <th className="py-2.5 px-4">Campo en SelfSME</th>
+                        <th className="py-2.5 px-4 text-right">Coincidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black/[0.04]">
+                      {csvResult.detectedColumns.map((col, idx) => (
+                        <tr key={idx} className="hover:bg-[#F5F5F7]/50 transition-colors">
+                          <td className="py-2.5 px-4 font-mono text-[12px] text-[#1D1D1F]">
+                            {col.sourceCol}
+                          </td>
+                          <td className="py-2.5 px-4 font-medium text-[#0071E3]">
+                            {col.targetField}
+                          </td>
+                          <td className="py-2.5 px-4 text-right">
+                            <span className="inline-flex items-center rounded-md bg-[#E8F8EE] px-1.5 py-0.5 text-[11px] font-medium text-[#1D7A3F]">
+                              {col.confidence}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Preview of rows to be imported */}
               <div>
                 <p className="text-[12px] font-semibold text-[#6E6E73] uppercase tracking-wider mb-2">
-                  Vista previa de registros a importar ({entity})
+                  Vista previa de registros válidos a importar ({entity})
                 </p>
                 <div className="space-y-2">
-                  {entity === 'clientes' ? (
-                    <>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Asociación Cultural Bellas Artes Madrid</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: G28491823 · C/ Serrano 54 · Actividad Artística</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Comunidad Residencial Puerta de Hierro 12</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: H28192847 · C/ Puerta de Hierro 12 · Contabilidad Comunidades</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Espacio Creativo Malasaña S.L.</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: B86928174 · C/ del Pez 22 · Actividad Artística</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                    </>
-                  ) : entity === 'proveedores' ? (
-                    <>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Papelería Técnica & Bellas Artes Minerva S.L.</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: B82910483 · Cuenta PGC 602 (Aprovisionamientos)</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Servicios Informáticos FincasNet S.L.</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: B85910284 · Cuenta PGC 629 (Software gestión)</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold text-[#1D1D1F]">Asesoría Jurídica LexFincas S.L.P.</p>
-                          <p className="text-[12px] text-[#6E6E73]">CIF: B89104829 · Cuenta PGC 623 (Servicios profesionales)</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#34C759]">Válido</span>
-                      </div>
-                    </>
+                  {csvResult && csvResult.validRows.length === 0 ? (
+                    <div className="p-4 text-center rounded-xl bg-[#F5F5F7] text-[13px] text-[#6E6E73]">
+                      No se encontraron registros válidos en el archivo.
+                    </div>
                   ) : (
-                    <>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold font-mono text-[#1D1D1F]">HIST-2025-089</p>
-                          <p className="text-[12px] text-[#6E6E73]">Comunidad C/ Alcalá 42 · 15/11/2025 · 1.007,00 € (Cobrada)</p>
+                    csvResult?.validRows.slice(0, 5).map((row, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <p className="font-semibold text-[#1D1D1F] truncate">{row.name}</p>
+                          <p className="text-[12px] text-[#6E6E73]">
+                            <span className="font-mono font-medium text-[#1D1D1F]">{row.tax_id}</span>
+                            {row.city ? ` · ${row.city}` : ''}
+                            {row.email ? ` · ${row.email}` : ''}
+                            <span className="tabular-nums"> · IVA {row.default_vat_rate}%</span>
+                          </p>
                         </div>
-                        <span className="text-[12px] font-medium text-[#86868B]">Histórico · No VeriFactu</span>
+                        <span className="shrink-0 text-[12px] font-medium text-[#34C759]">
+                          Válido
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold font-mono text-[#1D1D1F]">HIST-2025-090</p>
-                          <p className="text-[12px] text-[#6E6E73]">Galería Espacio Norte · 02/12/2025 · 1.710,00 € (Cobrada)</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#86868B]">Histórico · No VeriFactu</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-[#F5F5F7] text-[13px]">
-                        <div>
-                          <p className="font-semibold font-mono text-[#1D1D1F]">HIST-2026-001</p>
-                          <p className="text-[12px] text-[#6E6E73]">Comunidad Retiro Sur · 10/01/2026 · 795,00 € (Cobrada)</p>
-                        </div>
-                        <span className="text-[12px] font-medium text-[#86868B]">Histórico · No VeriFactu</span>
-                      </div>
-                    </>
+                    ))
+                  )}
+
+                  {csvResult && csvResult.validRows.length > 5 && (
+                    <p className="text-center text-[12px] text-[#6E6E73] pt-1">
+                      + {csvResult.validRows.length - 5} registros adicionales listos para procesar
+                    </p>
                   )}
                 </div>
               </div>
@@ -789,7 +645,8 @@ export function MigrationWizardModal({
               <button
                 type="button"
                 onClick={() => setCurrentStep((prev) => (prev - 1) as 1 | 2)}
-                className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium text-[#6E6E73] hover:bg-black/[0.05] hover:text-[#1D1D1F] transition-colors"
+                disabled={isImporting}
+                className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-medium text-[#6E6E73] hover:bg-black/[0.05] hover:text-[#1D1D1F] transition-colors disabled:opacity-50"
               >
                 <ArrowLeft className="h-4 w-4" />
                 Anterior
@@ -807,10 +664,11 @@ export function MigrationWizardModal({
             {currentStep === 1 && (
               <button
                 type="button"
+                disabled={entity === 'facturas'}
                 onClick={() => setCurrentStep(2)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#0071E3] px-5 py-2 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] hover:bg-[#0077ED] transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#0071E3] px-5 py-2 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] hover:bg-[#0077ED] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Continuar
+                {entity === 'facturas' ? 'Fase 2 (Próximamente)' : 'Continuar'}
                 <ArrowRight className="h-4 w-4" />
               </button>
             )}
@@ -829,11 +687,21 @@ export function MigrationWizardModal({
             {currentStep === 3 && (
               <button
                 type="button"
+                disabled={isImporting || !csvResult || csvResult.validRows.length === 0}
                 onClick={handleConfirmImport}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3] px-6 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] hover:bg-[#0077ED] transition-colors"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3] px-6 py-2.5 text-[14px] font-medium text-white shadow-[0_1px_2px_rgba(0,113,227,0.25)] hover:bg-[#0077ED] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <CheckCircle2 className="h-4 w-4" />
-                Confirmar importación
+                {isImporting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Guardando en base de datos...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Confirmar importación ({csvResult?.validRows.length ?? 0})</span>
+                  </>
+                )}
               </button>
             )}
           </div>

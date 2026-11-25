@@ -96,7 +96,7 @@ CREATE POLICY "clients_select"
   ON public.clients
   FOR SELECT
   TO authenticated
-  USING (public.is_org_member(organization_id));
+  USING (public.is_org_member(clients.organization_id));
 
 DROP POLICY IF EXISTS "clients_insert" ON public.clients;
 CREATE POLICY "clients_insert"
@@ -110,7 +110,7 @@ CREATE POLICY "clients_update"
   ON public.clients
   FOR UPDATE
   TO authenticated
-  USING (public.is_org_member(organization_id))
+  USING (public.is_org_member(clients.organization_id))
   WITH CHECK (public.is_org_member(organization_id));
 
 DROP POLICY IF EXISTS "clients_delete" ON public.clients;
@@ -118,7 +118,7 @@ CREATE POLICY "clients_delete"
   ON public.clients
   FOR DELETE
   TO authenticated
-  USING (public.is_org_member(organization_id));
+  USING (public.is_org_member(clients.organization_id));
 
 -- ------------------------------------------------------------------------------
 -- 3.2 RLS: public.suppliers
@@ -130,7 +130,7 @@ CREATE POLICY "suppliers_select"
   ON public.suppliers
   FOR SELECT
   TO authenticated
-  USING (public.is_org_member(organization_id));
+  USING (public.is_org_member(suppliers.organization_id));
 
 DROP POLICY IF EXISTS "suppliers_insert" ON public.suppliers;
 CREATE POLICY "suppliers_insert"
@@ -144,7 +144,7 @@ CREATE POLICY "suppliers_update"
   ON public.suppliers
   FOR UPDATE
   TO authenticated
-  USING (public.is_org_member(organization_id))
+  USING (public.is_org_member(suppliers.organization_id))
   WITH CHECK (public.is_org_member(organization_id));
 
 DROP POLICY IF EXISTS "suppliers_delete" ON public.suppliers;
@@ -152,4 +152,11 @@ CREATE POLICY "suppliers_delete"
   ON public.suppliers
   FOR DELETE
   TO authenticated
-  USING (public.is_org_member(organization_id));
+  USING (public.is_org_member(suppliers.organization_id));
+
+-- ------------------------------------------------------------------------------
+-- 3.3 Permissions / Table Grants for authenticated users
+-- ------------------------------------------------------------------------------
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.clients TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.suppliers TO authenticated;
+

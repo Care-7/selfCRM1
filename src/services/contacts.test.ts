@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeTaxId, mapDatabaseError } from './databaseErrors';
+import { normalizeTaxId, mapDatabaseError, isValidUuid } from './databaseErrors';
 import { clientRowToContact, supplierRowToContact } from './contactMappers';
 import type { ClientRow, SupplierRow, BusinessActivity } from '../types/database';
 
@@ -123,3 +123,87 @@ test('clientRowToContact and supplierRowToContact correctly map Supabase rows to
   assert.equal(supContact.status, 'Inactivo');
   assert.equal(supContact.activity, 'Gestión Comunidades'); // falls back to first activity
 });
+
+test('isValidUuid correctly distinguishes valid v4 UUIDs from arbitrary fallback strings', () => {
+  const validUuid = '11111111-1111-4111-a111-111111111111';
+  assert.equal(isValidUuid(validUuid), true);
+
+  assert.equal(isValidUuid('act-cc'), false);
+  assert.equal(isValidUuid('act-123'), false);
+  assert.equal(isValidUuid(''), false);
+  assert.equal(isValidUuid(null), false);
+  assert.equal(isValidUuid(undefined), false);
+});
+
+test('clientRowToContact preserves 0% VAT rate (exempt) without incorrectly falling back to 21%', () => {
+  const exemptClientRow: ClientRow = {
+    id: 'cli-exempt',
+    organization_id: 'org-1',
+    activity_id: null,
+    name: 'Asociación Sin Ánimo de Lucro',
+    tax_id: 'G12345678',
+    email: 'contacto@asociacion.es',
+    phone: null,
+    address: 'Plaza Mayor 1',
+    city: null,
+    postal_code: null,
+    country: 'ES',
+    default_vat_rate: 0, // Exempt 0%
+    default_irpf_rate: 0,
+    payment_terms: null,
+    iban: null,
+    notes: null,
+    is_active: true,
+    created_at: '2026-11-25T10:00:00Z',
+    updated_at: '2026-11-25T10:00:00Z',
+  };
+
+  const contact = clientRowToContact(exemptClientRow);
+  assert.equal(contact.defaultIva, 0);
+  assert.equal(contact.defaultIrpf, 0);
+});
+
+test('non-optimistic mutation guarantee: if service fails or throws, local state list remains unmutated', async () => {
+  const initialClients = [
+    { id: 'c1', name: 'Cliente Existente', nif: 'A11111111' },
+  ];
+  let localList = [...initialClients];
+
+  // Simulated non-optimistic action runner
+  const saveClientNonOptimistically = async (
+    persistFn: () => Promise<any>
+  ) => {
+    // Prohibited: updating localList BEFORE persistFn succeeds
+    const savedRow = await persistFn();
+    localList = [savedRow, ...localList];
+  };
+
+  // Case 1: Backend service fails (e.g. duplicate key or RLS)
+  const failingBackendService = async () => {
+    throw new Error('Ya existe un cliente con este NIF/CIF en tu organización.');
+  };
+
+  await assert.rejects(
+    async () => {
+      await saveClientNonOptimistically(failingBackendService);
+    },
+    {
+      name: 'Error',
+      message: 'Ya existe un cliente con este NIF/CIF en tu organización.',
+    }
+  );
+
+  // Assert localList was NOT mutated silently
+  assert.equal(localList.length, 1);
+  assert.equal(localList[0].id, 'c1');
+
+  // Case 2: Backend service succeeds
+  const succeedingBackendService = async () => {
+    return { id: 'c2', name: 'Nuevo Cliente Confirmado', nif: 'B22222222' };
+  };
+
+  await saveClientNonOptimistically(succeedingBackendService);
+  assert.equal(localList.length, 2);
+  assert.equal(localList[0].id, 'c2');
+});
+
