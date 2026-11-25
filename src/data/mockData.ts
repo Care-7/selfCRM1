@@ -16,7 +16,6 @@ export const INITIAL_USER_PROFILE: UserProfile = {
   address: 'C/ Jorge Juan 84, 3º Izq · 28009 Madrid',
   regime: 'autonomo',
   veriFactuEnabled: true,
-  avatarUrl: '/src/assets/images/avatar_elena_navarro_1795518063630.jpg',
 };
 
 export const INITIAL_CLIENTS: Contact[] = [

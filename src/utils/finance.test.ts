@@ -204,3 +204,56 @@ test('Proforma and Albarán series numbering and document division work accurate
   assert.ok(albaranes.some((a) => a.activity === 'Actividad Artística' && a.isValued === false));
 });
 
+test('financial calculations handle completely empty datasets cleanly with zero and finite values (no NaN)', () => {
+  // 1. Dashboard KPIs
+  const emptyKpis = calculateDashboardKPIs([], [], 'Todas las actividades', 'quarter', REFERENCE_DATE);
+  assert.equal(emptyKpis.netRevenue, 0);
+  assert.equal(emptyKpis.deductibleExpenses, 0);
+  assert.equal(emptyKpis.netProfit, 0);
+  assert.equal(emptyKpis.profitMarginPct, 0);
+  assert.equal(emptyKpis.taxForecastTotal, 0);
+  assert.equal(emptyKpis.revenueTrendPct, 0);
+  assert.ok(Number.isFinite(emptyKpis.netRevenue));
+  assert.ok(Number.isFinite(emptyKpis.profitMarginPct));
+  assert.ok(Number.isFinite(emptyKpis.revenueTrendPct));
+
+  // 2. Balance Sheet
+  const emptyBalance = calculateBalanceSheet([], [], 'Todas las actividades');
+  assert.equal(emptyBalance.isBalanced, true);
+  assert.equal(emptyBalance.totalActivo, emptyBalance.totalPasivoYPatrimonio);
+  assert.ok(Number.isFinite(emptyBalance.totalActivo));
+  assert.ok(!Number.isNaN(emptyBalance.totalActivo));
+
+  // 3. Financial Ratios
+  const ratios = calculateFinancialRatios(emptyBalance, emptyKpis);
+  assert.ok(ratios.length >= 4);
+  for (const ratio of ratios) {
+    assert.ok(Number.isFinite(ratio.rawValue), `Ratio ${ratio.name} must be finite`);
+    assert.ok(!Number.isNaN(ratio.rawValue), `Ratio ${ratio.name} must not be NaN`);
+  }
+  const liquidez = ratios.find((r) => r.name.includes('Liquidez'));
+  assert.ok(liquidez);
+  assert.ok(liquidez.rawValue >= 0);
+
+  // 4. Tax Summary
+  const emptyTax = calculateTaxSummary([], [], 'Todas las actividades', 'autonomo', 'T4');
+  assert.equal(emptyTax.mod303.resultado, 0);
+  assert.equal(emptyTax.mod130.resultado, 0);
+  assert.equal(emptyTax.mod111.cuotaIngresar, 0);
+  assert.ok(Number.isFinite(emptyTax.mod303.resultado));
+  assert.ok(Number.isFinite(emptyTax.mod130.resultado));
+
+  // 5. Journal Entries
+  const emptyEntries = generateJournalEntries([], [], 'Todas las actividades');
+  assert.deepEqual(emptyEntries, []);
+
+  // 6. Monthly series
+  const emptySeries = calculateMonthlySeries([], [], 'Todas las actividades');
+  assert.equal(emptySeries.length, 6);
+  for (const month of emptySeries) {
+    assert.equal(month.ingresos, 0);
+    assert.equal(month.gastos, 0);
+  }
+});
+
+

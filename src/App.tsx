@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Menu, CheckCircle2 } from 'lucide-react';
 import type {
   ActivityFilter,
@@ -57,12 +57,24 @@ function MainApp() {
   const [taxRegime, setTaxRegime] = useState<TaxRegime>('autonomo');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // In-memory stateful domain collections
+  const isDemo = !isConfigured;
+
+  // In-memory stateful domain collections (Strictly empty in live mode)
   const [userProfile, setUserProfile] = useState<UserProfile>(INITIAL_USER_PROFILE);
-  const [clients, setClients] = useState<Contact[]>(INITIAL_CLIENTS);
-  const [suppliers, setSuppliers] = useState<Contact[]>(INITIAL_SUPPLIERS);
-  const [issuedInvoices, setIssuedInvoices] = useState<IssuedInvoice[]>(INITIAL_ISSUED_INVOICES);
-  const [receivedInvoices, setReceivedInvoices] = useState<ReceivedInvoice[]>(INITIAL_RECEIVED_INVOICES);
+  const [clients, setClients] = useState<Contact[]>(() => (isDemo ? INITIAL_CLIENTS : []));
+  const [suppliers, setSuppliers] = useState<Contact[]>(() => (isDemo ? INITIAL_SUPPLIERS : []));
+  const [issuedInvoices, setIssuedInvoices] = useState<IssuedInvoice[]>(() => (isDemo ? INITIAL_ISSUED_INVOICES : []));
+  const [receivedInvoices, setReceivedInvoices] = useState<ReceivedInvoice[]>(() => (isDemo ? INITIAL_RECEIVED_INVOICES : []));
+
+  // Reset in-memory state on sign-out / session loss in live mode
+  useEffect(() => {
+    if (isConfigured && !session) {
+      setClients([]);
+      setSuppliers([]);
+      setIssuedInvoices([]);
+      setReceivedInvoices([]);
+    }
+  }, [isConfigured, session]);
 
   // Slide-over & modal state
   const [contactModal, setContactModal] = useState<{
@@ -91,7 +103,9 @@ function MainApp() {
   };
 
   const defaultActivity: ActivityType =
-    activityFilter === 'Todas las actividades' ? 'Contabilidad Comunidades' : activityFilter;
+    activityFilter === 'Todas las actividades'
+      ? (activities[0]?.name || (isDemo ? 'Contabilidad Comunidades' : 'Actividad Principal'))
+      : activityFilter;
 
   const handleSaveContact = (saved: Contact, isNew: boolean) => {
     if (saved.kind === 'cliente') {
@@ -215,15 +229,23 @@ function MainApp() {
     return <OnboardingPage />;
   }
 
+  const handleSignOut = async () => {
+    setClients([]);
+    setSuppliers([]);
+    setIssuedInvoices([]);
+    setReceivedInvoices([]);
+    await signOut();
+  };
+
   const effectiveUserProfile: UserProfile = {
-    fullName: organization?.name || profile?.full_name || userProfile.fullName,
-    nif: organization?.tax_id || userProfile.nif,
+    fullName: organization?.name || profile?.full_name || (isDemo ? userProfile.fullName : 'Mi Empresa'),
+    nif: organization?.tax_id || (isDemo ? userProfile.nif : ''),
     roleLabel: organization?.legal_form === 'sl' ? 'Sociedad Limitada' : 'Autónomo',
-    email: profile?.email || session?.user?.email || userProfile.email,
-    address: userProfile.address,
+    email: profile?.email || session?.user?.email || (isDemo ? userProfile.email : ''),
+    address: isDemo ? userProfile.address : '',
     regime: organization?.legal_form === 'sl' ? 'empresa' : 'autonomo',
     veriFactuEnabled: userProfile.veriFactuEnabled,
-    avatarUrl: userProfile.avatarUrl,
+    avatarUrl: undefined,
   };
 
   const activityOptions: ActivityFilter[] = [
@@ -267,7 +289,7 @@ function MainApp() {
         userProfile={effectiveUserProfile}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenMigration={() => setMigrationModalOpen(true)}
-        onSignOut={isConfigured && session ? signOut : undefined}
+        onSignOut={isConfigured && session ? handleSignOut : undefined}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
       />

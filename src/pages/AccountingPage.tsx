@@ -352,7 +352,17 @@ export function AccountingPage({
           </div>
 
           <div className="space-y-4">
-            {journalEntries.map((entry) => (
+            {journalEntries.length === 0 ? (
+              <div className="rounded-2xl bg-white p-12 text-center shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
+                <p className="text-[15px] font-semibold text-[#1D1D1F]">
+                  No hay asientos contables registrados
+                </p>
+                <p className="mt-1 text-[13px] text-[#6E6E73] max-w-md mx-auto">
+                  Los asientos del Libro Diario se generarán automáticamente conforme emitas facturas o registres gastos deducibles.
+                </p>
+              </div>
+            ) : (
+              journalEntries.map((entry) => (
               <article
                 key={entry.id}
                 className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]"
@@ -418,7 +428,8 @@ export function AccountingPage({
                   </table>
                 </div>
               </article>
-            ))}
+            ))
+          )}
           </div>
         </div>
       )}

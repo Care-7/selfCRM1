@@ -590,7 +590,9 @@ export function calculateFinancialRatios(
   const liquidez =
     balance.totalPasivoCorriente > 0
       ? round2(balance.totalActivoCorriente / balance.totalPasivoCorriente)
-      : 9.99;
+      : balance.totalActivoCorriente > 0
+      ? 9.99
+      : 0;
 
   const endeudamiento =
     balance.totalActivo > 0

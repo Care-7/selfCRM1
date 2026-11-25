@@ -219,7 +219,7 @@ export interface UserProfile {
   address: string;
   regime: TaxRegime;
   veriFactuEnabled: boolean;
-  avatarUrl: string;
+  avatarUrl?: string;
 }
 
 export interface OcrSampleInvoice {

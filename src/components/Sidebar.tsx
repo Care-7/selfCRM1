@@ -63,12 +63,13 @@ export function Sidebar({
     ? activityOptions
     : ACTIVITY_OPTIONS;
 
-  const initials = userProfile.fullName
-    .split(' ')
-    .slice(0, 2)
-    .map((p) => p[0])
-    .join('')
-    .toUpperCase();
+  const rawName = (userProfile.fullName || userProfile.email || 'U').trim();
+  const nameParts = rawName.split(/[\s@._-]+/).filter(Boolean);
+  const initials = (
+    nameParts.length >= 2
+      ? `${nameParts[0][0]}${nameParts[1][0]}`
+      : rawName.slice(0, 2)
+  ).toUpperCase();
 
   const content = (
     <div className="flex h-full flex-col bg-[#FBFBFD] border-r border-black/[0.04] px-4 py-6">
@@ -197,7 +198,7 @@ export function Sidebar({
                 className="h-9 w-9 shrink-0 rounded-full object-cover bg-[#F5F5F7]"
               />
             ) : (
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0071E3]/10 text-[12px] font-semibold text-[#0071E3]">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#E8F0FE] text-[12px] font-semibold text-[#0071E3] tracking-wide">
                 {initials}
               </span>
             )}
