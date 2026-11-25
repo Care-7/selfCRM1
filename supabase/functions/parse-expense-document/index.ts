@@ -6,6 +6,37 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+/**
+ * Sorts discovered Gemini models prioritizing 'flash' over 'pro',
+ * and ordering by version number (highest first).
+ */
+function sortGeminiModels(models: string[]): string[] {
+  return [...models].sort((a, b) => {
+    const aLower = a.toLowerCase();
+    const bLower = b.toLowerCase();
+    const aIsFlash = aLower.includes('flash');
+    const bIsFlash = bLower.includes('flash');
+    if (aIsFlash && !bIsFlash) return -1;
+    if (!aIsFlash && bIsFlash) return 1;
+
+    const aIsPro = aLower.includes('pro');
+    const bIsPro = bLower.includes('pro');
+    if (aIsPro && !bIsPro) return -1;
+    if (!aIsPro && bIsPro) return 1;
+
+    // Compare versions (e.g. 2.5 vs 2.0 vs 1.5)
+    const getVersion = (s: string) => {
+      const match = s.match(/(\d+(?:\.\d+)?)/);
+      return match ? parseFloat(match[1]) : 0;
+    };
+    const vA = getVersion(a);
+    const vB = getVersion(b);
+    if (vA !== vB) return vB - vA; // Highest version first
+
+    return a.localeCompare(b);
+  });
+}
+
 Deno.serve(async (req: Request) => {
   // 1. Handle CORS Preflight
   if (req.method === 'OPTIONS') {
@@ -229,10 +260,18 @@ REGLAS FISCALES OBLIGATORIAS:
       },
     };
 
-    // 6. Configurable primary model with ordered fallback list
-    const primaryModel = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
-    const fallbackCandidates = [primaryModel, 'gemini-3.8-flash', 'gemini-3.0-flash'];
-    const candidateModels = Array.from(new Set(fallbackCandidates));
+    // 6. Configurable primary model with ordered fallback list & dynamic ListModels discovery
+    const envModel = Deno.env.get('GEMINI_MODEL');
+    const initialCandidates = [
+      envModel,
+      'gemini-flash-latest',
+      'gemini-2.5-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-3.8-flash',
+    ].filter(Boolean) as string[];
+
+    const candidateModels: string[] = Array.from(new Set(initialCandidates));
+    const triedModels = new Set<string>();
 
     let lastGeminiRes: Response | null = null;
     let lastGoogleMessage = '';
@@ -240,7 +279,9 @@ REGLAS FISCALES OBLIGATORIAS:
     let rawText: string | null = null;
     let usedModel = '';
 
-    for (const model of candidateModels) {
+    const executeGenerateContent = async (model: string): Promise<boolean> => {
+      if (triedModels.has(model)) return false;
+      triedModels.add(model);
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
 
       try {
@@ -257,7 +298,7 @@ REGLAS FISCALES OBLIGATORIAS:
           rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
           if (rawText) {
             usedModel = model;
-            break;
+            return true;
           }
         }
 
@@ -279,26 +320,93 @@ REGLAS FISCALES OBLIGATORIAS:
         lastGoogleMessage = googleMessage;
         lastGoogleStatus = googleStatus;
         console.warn(`Gemini call failed for model '${model}' (HTTP ${geminiRes.status}):`, googleMessage);
-
-        const isModelUnavailable =
-          geminiRes.status === 404 ||
-          googleStatus === 'NOT_FOUND' ||
-          googleMessage.toLowerCase().includes('is no longer available') ||
-          googleMessage.toLowerCase().includes('not found') ||
-          googleMessage.toLowerCase().includes('unsupported model') ||
-          googleMessage.toLowerCase().includes('not supported');
-
-        if (isModelUnavailable) {
-          // Model deprecated or not found -> retry with next model in fallback list
-          continue;
-        }
-
-        // If client credentials are bad (401/403), no need to retry with another model
-        if (geminiRes.status === 401 || geminiRes.status === 403) {
-          break;
-        }
       } catch (networkErr: any) {
         console.warn(`Network error calling model '${model}':`, networkErr?.message);
+      }
+      return false;
+    };
+
+    const isNotFoundError = (status: number, message: string, googleStatus: string): boolean => {
+      const msg = (message || '').toLowerCase();
+      return (
+        status === 404 ||
+        googleStatus === 'NOT_FOUND' ||
+        msg.includes('is not found') ||
+        msg.includes('not found') ||
+        msg.includes('is no longer available') ||
+        msg.includes('unsupported model') ||
+        msg.includes('not supported')
+      );
+    };
+
+    // 6.1 Try initial candidate models
+    let modelNotFoundDetected = false;
+    for (const model of candidateModels) {
+      const ok = await executeGenerateContent(model);
+      if (ok) break;
+
+      const isNotFound = isNotFoundError(
+        lastGeminiRes?.status ?? 0,
+        lastGoogleMessage,
+        lastGoogleStatus
+      );
+
+      if (isNotFound) {
+        modelNotFoundDetected = true;
+        continue;
+      }
+
+      // If credentials fail (401/403), stop immediately without looping
+      if (lastGeminiRes?.status === 401 || lastGeminiRes?.status === 403) {
+        break;
+      }
+    }
+
+    // 6.2 Dynamic auto-discovery via ListModels if candidates failed with 404/not found
+    let discoveredModelNames: string[] = [];
+    if (
+      !rawText &&
+      modelNotFoundDetected &&
+      lastGeminiRes?.status !== 401 &&
+      lastGeminiRes?.status !== 403
+    ) {
+      console.log('Querying ListModels to discover active Gemini models for this API key...');
+      try {
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`;
+        const listRes = await fetch(listUrl);
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          const rawModels = Array.isArray(listData?.models) ? listData.models : [];
+
+          const excludeTokens = ['embedding', 'aqa', 'imagen', 'veo', 'tts'];
+          const validModels = rawModels
+            .filter((m: any) => {
+              const name = String(m?.name || '').toLowerCase();
+              const methods = Array.isArray(m?.supportedGenerationMethods)
+                ? m.supportedGenerationMethods
+                : [];
+              if (!methods.includes('generateContent')) return false;
+              if (!name.includes('gemini')) return false;
+              if (excludeTokens.some((tok) => name.includes(tok))) return false;
+              return true;
+            })
+            .map((m: any) => String(m.name || '').replace(/^models\//, ''));
+
+          discoveredModelNames = sortGeminiModels(validModels);
+          console.log('Discovered compatible models for API key:', discoveredModelNames.join(', '));
+
+          // Try up to top 3 discovered models that haven't been tried yet
+          const modelsToTry = discoveredModelNames.filter((m) => !triedModels.has(m)).slice(0, 3);
+          for (const model of modelsToTry) {
+            console.log(`Retrying with auto-discovered model: ${model}`);
+            const ok = await executeGenerateContent(model);
+            if (ok) break;
+          }
+        } else {
+          console.warn('ListModels query returned non-2xx status:', listRes.status);
+        }
+      } catch (listErr: any) {
+        console.warn('Error fetching ListModels:', listErr?.message);
       }
     }
 
@@ -331,12 +439,22 @@ REGLAS FISCALES OBLIGATORIAS:
         } else {
           errorMessage = `El documento no pudo ser procesado por la IA: ${lastGoogleMessage || 'Parámetros no válidos.'}`;
         }
+      } else if (isNotFoundError(status, lastGoogleMessage, lastGoogleStatus)) {
+        if (discoveredModelNames.length > 0) {
+          errorMessage = `Los modelos de Gemini probados (${Array.from(triedModels).join(', ')}) no están disponibles para tu clave. Modelos activos detectados en tu cuenta: ${discoveredModelNames.join(', ')}. Puedes configurar GEMINI_MODEL en Supabase Secrets con uno de ellos.`;
+        } else {
+          errorMessage = `Los modelos de Gemini probados (${Array.from(triedModels).join(', ')}) no están disponibles para tu clave de API (HTTP 404). Configura la variable GEMINI_MODEL en Supabase Secrets con el modelo activo de tu proyecto de Google AI Studio.`;
+        }
       } else if (lastGoogleMessage) {
         errorMessage = `Error del servicio de IA: ${lastGoogleMessage}`;
       }
 
       return new Response(
-        JSON.stringify({ error: errorMessage }),
+        JSON.stringify({
+          error: errorMessage,
+          triedModels: Array.from(triedModels),
+          availableModels: discoveredModelNames,
+        }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
