@@ -227,6 +227,7 @@ function MainApp() {
             activity_id: targetActivityId,
             name: saved.name,
             tax_id: saved.nif,
+            account_code: saved.accountCode || null,
             email: saved.email || null,
             phone: saved.phone || null,
             address: saved.address || null,
@@ -244,6 +245,7 @@ function MainApp() {
             activity_id: targetActivityId,
             name: saved.name,
             tax_id: saved.nif,
+            account_code: saved.accountCode || null,
             email: saved.email || null,
             phone: saved.phone || null,
             address: saved.address || null,
@@ -264,6 +266,7 @@ function MainApp() {
             activity_id: targetActivityId,
             name: saved.name,
             tax_id: saved.nif,
+            account_code: saved.accountCode || null,
             email: saved.email || null,
             phone: saved.phone || null,
             address: saved.address || null,
@@ -281,6 +284,7 @@ function MainApp() {
             activity_id: targetActivityId,
             name: saved.name,
             tax_id: saved.nif,
+            account_code: saved.accountCode || null,
             email: saved.email || null,
             phone: saved.phone || null,
             address: saved.address || null,
@@ -575,6 +579,36 @@ function MainApp() {
     setRectifyingInvoice(null);
   };
 
+  const handleDuplicateInvoice = (source: IssuedInvoice) => {
+    const act = activities.find((a) => a.name === source.activity);
+    const nextNumberInfo = getNextInvoiceNumber(
+      issuedInvoices,
+      source.activity,
+      source.documentType ?? 'normal',
+      act?.next_invoice_number
+    );
+    const duplicated: IssuedInvoice = {
+      ...source,
+      id: `inv-dup-${Date.now()}`,
+      number: nextNumberInfo.number,
+      series: nextNumberInfo.series,
+      status: 'Borrador',
+      issueDate: REFERENCE_DATE,
+      dueDate: '2026-12-24',
+      veriFactuLocked: false,
+      veriFactuHash: undefined,
+      veriFactuTimestamp: undefined,
+      verifactuPrevHash: undefined,
+      isMigrated: false,
+      lines: source.lines.map((line, idx) => ({
+        ...line,
+        id: `line-dup-${Date.now()}-${idx}`,
+      })),
+    };
+    setInvoiceModal({ open: true, invoice: duplicated });
+    showToast(`Borrador duplicado a partir de ${source.number}.`);
+  };
+
   const handleSaveReceivedExpense = async (expense: ReceivedInvoice, file?: File | null) => {
     const isNew = !expenseModal.expense;
     if (isConfigured) {
@@ -693,6 +727,7 @@ function MainApp() {
             organization_id: organization.id,
             name: row.name,
             tax_id: row.tax_id || null,
+            account_code: row.account_code || null,
             email: row.email || null,
             phone: row.phone || null,
             address: row.address || null,
@@ -768,6 +803,7 @@ function MainApp() {
         defaultIrpf: (row.default_irpf_rate != null ? Number(row.default_irpf_rate) : 0) as IrpfRate,
         iban: row.iban || undefined,
         paymentTerms: row.payment_terms || undefined,
+        accountCode: row.account_code || undefined,
         notes: row.notes || 'Importado vía Asistente de Migración',
         historicalVolume: 0,
         status: 'Activo',
@@ -812,6 +848,7 @@ function MainApp() {
             organization_id: organization.id,
             name: row.name,
             tax_id: row.tax_id || null,
+            account_code: row.account_code || null,
             email: row.email || null,
             phone: row.phone || null,
             address: row.address || null,
@@ -886,6 +923,7 @@ function MainApp() {
         defaultIrpf: (row.default_irpf_rate != null ? Number(row.default_irpf_rate) : 0) as IrpfRate,
         iban: row.iban || undefined,
         paymentTerms: row.payment_terms || undefined,
+        accountCode: row.account_code || undefined,
         notes: row.notes || 'Importado vía Asistente de Migración',
         historicalVolume: 0,
         status: 'Activo',
@@ -1058,6 +1096,7 @@ function MainApp() {
               onOpenAiExpenseModal={() => setExpenseModal({ open: true, expense: null })}
               onSelectReceivedInvoice={(invoice) => setExpenseModal({ open: true, expense: invoice })}
               onConvertToInvoice={handleConvertDocumentToInvoice}
+              onDuplicateInvoice={handleDuplicateInvoice}
             />
           )}
 
@@ -1109,6 +1148,8 @@ function MainApp() {
         onConvertToInvoice={handleConvertDocumentToInvoice}
         onDeleteDocument={handleDeleteInvoice}
         onEmitRectificativa={handleOpenRectificativa}
+        onDuplicateInvoice={handleDuplicateInvoice}
+        onQuickCreateClient={(contact) => handleSaveContact(contact, true)}
       />
 
       <AiExpenseModal
@@ -1121,6 +1162,7 @@ function MainApp() {
         onSaveExpense={handleSaveReceivedExpense}
         onDeleteExpense={handleDeleteReceivedExpense}
         onTogglePaymentStatus={handleToggleReceivedPaymentStatus}
+        onQuickCreateSupplier={(contact) => handleSaveContact(contact, true)}
       />
 
       <SettingsModal

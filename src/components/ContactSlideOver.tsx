@@ -43,6 +43,7 @@ export function ContactSlideOver({
 }: ContactSlideOverProps) {
   const [name, setName] = useState('');
   const [nif, setNif] = useState('');
+  const [accountCode, setAccountCode] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -71,6 +72,7 @@ export function ContactSlideOver({
     if (contact) {
       setName(contact.name);
       setNif(contact.nif);
+      setAccountCode(contact.accountCode ?? '');
       setEmail(contact.email);
       setPhone(contact.phone || '');
       setAddress(contact.address);
@@ -83,6 +85,7 @@ export function ContactSlideOver({
     } else {
       setName('');
       setNif('');
+      setAccountCode('');
       setEmail('');
       setPhone('');
       setAddress('');
@@ -166,6 +169,7 @@ export function ContactSlideOver({
       kind,
       name: name.trim(),
       nif: cleanedNif,
+      accountCode: accountCode.trim() || undefined,
       email: email.trim(),
       phone: phone.trim() || undefined,
       address: address.trim(),
@@ -310,18 +314,17 @@ export function ContactSlideOver({
               </div>
 
               <div>
-                <label htmlFor="contact-status" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  Estado
+                <label htmlFor="contact-account-code" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                  Subcuenta PGC <span className="text-[12px] font-normal text-[#86868B]">(opcional)</span>
                 </label>
-                <select
-                  id="contact-status"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as ContactStatus)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
-                >
-                  <option value="Activo">Activo</option>
-                  <option value="Inactivo">Inactivo</option>
-                </select>
+                <input
+                  id="contact-account-code"
+                  type="text"
+                  value={accountCode}
+                  onChange={(e) => setAccountCode(e.target.value.trim())}
+                  placeholder={kind === 'cliente' ? '43000001' : '41000001'}
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 font-mono text-[14px] text-[#1D1D1F] placeholder:text-[#86868B] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
+                />
               </div>
             </div>
 
@@ -391,29 +394,46 @@ export function ContactSlideOver({
               )}
             </div>
 
-            <div>
-              <label htmlFor="contact-activity" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                Actividad asociada
-              </label>
-              <select
-                id="contact-activity"
-                value={activityId || activity}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  const item = activityList.find((a) => a.id === val || a.name === val);
-                  if (item) {
-                    setActivity(item.name);
-                    setActivityId(!item.id.startsWith('act-') ? item.id : undefined);
-                  }
-                }}
-                className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
-              >
-                {activityList.map((act) => (
-                  <option key={act.id} value={act.id}>
-                    {act.name}
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="contact-activity" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                  Actividad asociada
+                </label>
+                <select
+                  id="contact-activity"
+                  value={activityId || activity}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const item = activityList.find((a) => a.id === val || a.name === val);
+                    if (item) {
+                      setActivity(item.name);
+                      setActivityId(!item.id.startsWith('act-') ? item.id : undefined);
+                    }
+                  }}
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
+                >
+                  {activityList.map((act) => (
+                    <option key={act.id} value={act.id}>
+                      {act.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="contact-status" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
+                  Estado
+                </label>
+                <select
+                  id="contact-status"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as ContactStatus)}
+                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
+                >
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">

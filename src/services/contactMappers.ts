@@ -29,6 +29,7 @@ export function clientRowToContact(
     notes: row.notes || undefined,
     paymentTerms: row.payment_terms || undefined,
     iban: row.iban || undefined,
+    accountCode: row.account_code || undefined,
   };
 }
 
@@ -59,5 +60,6 @@ export function supplierRowToContact(
     historicalVolume: 0,
     notes: row.notes || undefined,
     iban: row.iban || undefined,
+    accountCode: row.account_code || undefined,
   };
 }

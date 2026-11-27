@@ -40,6 +40,9 @@ export function mapDatabaseError(
     if (entity === 'gasto') {
       return 'Ya existe una factura registrada con este mismo número y proveedor en tu organización.';
     }
+    if (message.includes('account_code') || err.details?.includes('account_code')) {
+      return `Ya existe un ${entity} con esta subcuenta PGC en tu organización.`;
+    }
     return `Ya existe un ${entity} con este NIF/CIF en tu organización.`;
   }
   if (code === '23503') {

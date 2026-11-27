@@ -116,7 +116,8 @@ export function generateVeriFactuHash(
 export function getNextInvoiceNumber(
   invoices: IssuedInvoice[],
   activity: ActivityType,
-  documentType: DocumentType = 'normal'
+  documentType: DocumentType = 'normal',
+  startNumber?: number | null
 ): { series: 'CC' | 'AR' | 'PRO' | 'ALB' | string; number: string } {
   if (documentType === 'proforma') {
     const series = 'PRO';
@@ -127,7 +128,9 @@ export function getNextInvoiceNumber(
         const seq = Number(parts[parts.length - 1]) || 0;
         return Math.max(max, seq);
       }, 0);
-    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    const start = typeof startNumber === 'number' && startNumber > 0 ? startNumber : 1;
+    const nextVal = Math.max(start, maxSeq + 1);
+    const nextSeq = String(nextVal).padStart(4, '0');
     return { series, number: `${series}-2026-${nextSeq}` };
   }
 
@@ -140,7 +143,9 @@ export function getNextInvoiceNumber(
         const seq = Number(parts[parts.length - 1]) || 0;
         return Math.max(max, seq);
       }, 0);
-    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    const start = typeof startNumber === 'number' && startNumber > 0 ? startNumber : 1;
+    const nextVal = Math.max(start, maxSeq + 1);
+    const nextSeq = String(nextVal).padStart(4, '0');
     return { series, number: `${series}-2026-${nextSeq}` };
   }
 
@@ -153,7 +158,9 @@ export function getNextInvoiceNumber(
         const seq = Number(parts[parts.length - 1]) || 0;
         return Math.max(max, seq);
       }, 0);
-    const nextSeq = String(maxSeq + 1).padStart(4, '0');
+    const start = typeof startNumber === 'number' && startNumber > 0 ? startNumber : 1;
+    const nextVal = Math.max(start, maxSeq + 1);
+    const nextSeq = String(nextVal).padStart(4, '0');
     return { series, number: `${series}-2026-${nextSeq}` };
   }
 
@@ -169,7 +176,9 @@ export function getNextInvoiceNumber(
       const seq = Number(parts[parts.length - 1]) || 0;
       return Math.max(max, seq);
     }, 0);
-  const nextSeq = String(maxSeq + 1).padStart(3, '0');
+  const start = typeof startNumber === 'number' && startNumber > 0 ? startNumber : 1;
+  const nextVal = Math.max(start, maxSeq + 1);
+  const nextSeq = String(nextVal).padStart(3, '0');
   return { series, number: `${series}-2026-${nextSeq}` };
 }
 

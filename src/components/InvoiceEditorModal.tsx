@@ -12,6 +12,8 @@ import {
   AlertCircle,
   Loader2,
   Download,
+  Copy,
+  Search,
 } from 'lucide-react';
 import { downloadInvoicePdf } from '../services/invoicePdfService';
 import type {
@@ -53,6 +55,8 @@ interface InvoiceEditorModalProps {
   onConvertToInvoice?: (doc: IssuedInvoice) => Promise<void> | void;
   onDeleteDocument?: (doc: IssuedInvoice) => Promise<void> | void;
   onEmitRectificativa?: (invoice: IssuedInvoice) => void;
+  onDuplicateInvoice?: (invoice: IssuedInvoice) => void;
+  onQuickCreateClient?: (contact: Contact) => Promise<Contact | void> | void;
 }
 
 const DOC_TYPE_OPTIONS: { value: DocumentType; label: string }[] = [
@@ -75,6 +79,8 @@ export function InvoiceEditorModal({
   onConvertToInvoice,
   onDeleteDocument,
   onEmitRectificativa,
+  onDuplicateInvoice,
+  onQuickCreateClient,
 }: InvoiceEditorModalProps) {
   const isLocked = Boolean(invoice?.veriFactuLocked);
   const isNew = !invoice;
@@ -82,6 +88,8 @@ export function InvoiceEditorModal({
   const [documentType, setDocumentType] = useState<DocumentType>('normal');
   const [isValued, setIsValued] = useState<boolean>(true);
   const [clientId, setClientId] = useState('');
+  const [clientSearch, setClientSearch] = useState('');
+  const [customInvoiceNumber, setCustomInvoiceNumber] = useState<string>('');
   const [activity, setActivity] = useState<ActivityType>(defaultActivity);
   const [issueDate, setIssueDate] = useState(REFERENCE_DATE);
   const [dueDate, setDueDate] = useState('2026-12-24');
@@ -94,12 +102,23 @@ export function InvoiceEditorModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
+  // Quick inline client creation states
+  const [showInlineNewClient, setShowInlineNewClient] = useState(false);
+  const [newCliName, setNewCliName] = useState('');
+  const [newCliNif, setNewCliNif] = useState('');
+  const [newCliAccountCode, setNewCliAccountCode] = useState('');
+  const [newCliEmail, setNewCliEmail] = useState('');
+  const [isSavingQuickClient, setIsSavingQuickClient] = useState(false);
+
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg('');
     setIsSubmitting(false);
+    setShowInlineNewClient(false);
+    setClientSearch('');
 
     if (invoice) {
+      setCustomInvoiceNumber(invoice.number);
       setDocumentType(invoice.documentType ?? 'normal');
       setIsValued(invoice.isValued !== false);
       setClientId(invoice.clientId);
@@ -113,6 +132,7 @@ export function InvoiceEditorModal({
       setRectificationReason(invoice.rectificationReason || '');
     } else if (initialRectifiedInvoice) {
       // Opening in rectification mode for a specific invoice
+      setCustomInvoiceNumber('');
       setDocumentType('rectificativa');
       setIsValued(true);
       setClientId(initialRectifiedInvoice.clientId);
@@ -168,6 +188,17 @@ export function InvoiceEditorModal({
     () => clients.find((c) => c.id === clientId),
     [clients, clientId]
   );
+
+  const filteredClients = useMemo(() => {
+    if (!clientSearch.trim()) return clients;
+    const q = clientSearch.toLowerCase();
+    return clients.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.nif.toLowerCase().includes(q) ||
+        (Boolean(c.accountCode) && c.accountCode!.toLowerCase().includes(q))
+    );
+  }, [clients, clientSearch]);
 
   const invoiceNumberInfo = useMemo(() => {
     if (invoice) {
@@ -238,10 +269,11 @@ export function InvoiceEditorModal({
       }
     }
 
+    const finalNumber = (customInvoiceNumber || invoiceNumberInfo.number).trim();
     const shouldLock = emitVeriFactu && (documentType === 'normal' || documentType === 'rectificativa');
     const hash = shouldLock
       ? generateVeriFactuHash(
-          invoiceNumberInfo.number,
+          finalNumber,
           selectedClient.nif,
           issueDate,
           totals.total
@@ -250,7 +282,7 @@ export function InvoiceEditorModal({
 
     return {
       id: invoice ? invoice.id : `inv-${Date.now()}`,
-      number: invoiceNumberInfo.number,
+      number: finalNumber,
       series: invoiceNumberInfo.series,
       documentType,
       isValued: documentType === 'albaran' ? isValued : undefined,
@@ -559,42 +591,168 @@ export function InvoiceEditorModal({
             {/* Client + Series + Activity */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label htmlFor="inv-client" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  Cliente
-                </label>
-                <select
-                  id="inv-client"
-                  disabled={isLocked}
-                  value={clientId}
-                  onChange={(e) => handleClientChange(e.target.value)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15 disabled:opacity-65"
-                >
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                {selectedClient && (
-                  <p className="mt-1.5 text-[12px] text-[#6E6E73]">
-                    NIF: <span className="font-mono text-[#1D1D1F]">{selectedClient.nif}</span> · {selectedClient.activity}
-                  </p>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="inv-client" className="block text-[13px] font-medium text-[#1D1D1F]">
+                    Cliente
+                  </label>
+                  {!isLocked && onQuickCreateClient && !showInlineNewClient && (
+                    <button
+                      type="button"
+                      onClick={() => setShowInlineNewClient(true)}
+                      className="inline-flex items-center gap-1 text-[12px] font-medium text-[#0071E3] hover:underline"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Nuevo cliente
+                    </button>
+                  )}
+                </div>
+
+                {showInlineNewClient ? (
+                  <div className="rounded-xl border border-[#0071E3]/20 bg-[#F5F5F7] p-3 mb-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-semibold text-[#1D1D1F]">Alta rápida de cliente</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineNewClient(false)}
+                        className="text-[11px] text-[#6E6E73] hover:text-[#1D1D1F]"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Nombre o razón social *"
+                        value={newCliName}
+                        onChange={(e) => setNewCliName(e.target.value)}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        placeholder="NIF / CIF (opcional)"
+                        value={newCliNif}
+                        onChange={(e) => setNewCliNif(e.target.value.toUpperCase())}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Subcuenta PGC (ej. 43000001)"
+                        value={newCliAccountCode}
+                        onChange={(e) => setNewCliAccountCode(e.target.value.trim())}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                      <input
+                        type="email"
+                        placeholder="Email (opcional)"
+                        value={newCliEmail}
+                        onChange={(e) => setNewCliEmail(e.target.value)}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={isSavingQuickClient || !newCliName.trim()}
+                        onClick={async () => {
+                          if (!newCliName.trim()) return;
+                          try {
+                            setIsSavingQuickClient(true);
+                            const newContact: Contact = {
+                              id: `cli-${Date.now()}`,
+                              kind: 'cliente',
+                              name: newCliName.trim(),
+                              nif: newCliNif.trim().toUpperCase(),
+                              accountCode: newCliAccountCode.trim() || undefined,
+                              email: newCliEmail.trim() || `cliente.${Date.now()}@facturacion.es`,
+                              address: 'Dirección no especificada',
+                              activity,
+                              defaultIva: ivaRate,
+                              defaultIrpf: irpfRate,
+                              status: 'Activo',
+                              historicalVolume: 0,
+                            };
+                            if (onQuickCreateClient) {
+                              await onQuickCreateClient(newContact);
+                            }
+                            setClientId(newContact.id);
+                            setShowInlineNewClient(false);
+                            setNewCliName('');
+                            setNewCliNif('');
+                            setNewCliAccountCode('');
+                            setNewCliEmail('');
+                          } catch (err: any) {
+                            setErrorMsg(err.message || 'Error al crear cliente rápido.');
+                          } finally {
+                            setIsSavingQuickClient(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#0071E3] px-3 py-1 text-[12px] font-medium text-white hover:bg-[#0077ED] disabled:opacity-50"
+                      >
+                        {isSavingQuickClient && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Crear y seleccionar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {clients.length > 5 && (
+                      <div className="relative mb-1.5">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868B]" />
+                        <input
+                          type="text"
+                          placeholder="Buscar por nombre, NIF o subcuenta..."
+                          value={clientSearch}
+                          onChange={(e) => setClientSearch(e.target.value)}
+                          className="w-full rounded-lg bg-[#F5F5F7] pl-8 pr-2.5 py-1 text-[12px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none"
+                        />
+                      </div>
+                    )}
+                    <select
+                      id="inv-client"
+                      disabled={isLocked}
+                      value={clientId}
+                      onChange={(e) => handleClientChange(e.target.value)}
+                      className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent transition-all focus:bg-white focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15 disabled:opacity-65"
+                    >
+                      {filteredClients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.accountCode ? `[${c.accountCode}] ` : ''}{c.name} {c.nif ? `(${c.nif})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedClient && (
+                      <p className="mt-1.5 text-[12px] text-[#6E6E73]">
+                        {selectedClient.accountCode && (
+                          <span className="font-mono text-[#0071E3] mr-2">Cta: {selectedClient.accountCode}</span>
+                        )}
+                        NIF: <span className="font-mono text-[#1D1D1F]">{selectedClient.nif || '—'}</span> · {selectedClient.activity}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
               <div>
                 <label htmlFor="inv-number-preview" className="block text-[13px] font-medium text-[#1D1D1F] mb-1.5">
-                  Número asignado
+                  Número {isLocked ? 'bloqueado (VeriFactu)' : 'de factura (editable)'}
                 </label>
-                <input
-                  id="inv-number-preview"
-                  type="text"
-                  disabled
-                  value={invoiceNumberInfo.number}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 font-mono text-[14px] text-[#1D1D1F] border border-transparent opacity-85"
-                />
+                <div className="relative">
+                  <input
+                    id="inv-number-preview"
+                    type="text"
+                    disabled={isLocked}
+                    value={customInvoiceNumber !== '' ? customInvoiceNumber : invoiceNumberInfo.number}
+                    onChange={(e) => setCustomInvoiceNumber(e.target.value)}
+                    className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 font-mono text-[14px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none disabled:opacity-85"
+                  />
+                  {isLocked && (
+                    <Lock className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#86868B]" />
+                  )}
+                </div>
                 <p className="mt-1.5 text-[12px] text-[#6E6E73]">
-                  Serie: <span className="font-mono font-medium text-[#1D1D1F]">{invoiceNumberInfo.series}</span> · Numeración correlativa
+                  Serie: <span className="font-mono font-medium text-[#1D1D1F]">{invoiceNumberInfo.series}</span> · {isLocked ? 'Sellado legal e inmutable' : 'Modificable antes de sellar'}
                 </p>
               </div>
             </div>
@@ -1102,6 +1260,20 @@ export function InvoiceEditorModal({
                         Emitir factura rectificativa
                       </button>
                     )}
+                    {invoice && onDuplicateInvoice && (
+                      <button
+                        type="button"
+                        disabled={isSubmitting || isGeneratingPdf}
+                        onClick={() => {
+                          onDuplicateInvoice(invoice);
+                          onClose();
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.08] px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.03] disabled:opacity-50"
+                      >
+                        <Copy className="h-4 w-4 text-[#0071E3]" />
+                        Duplicar factura
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={isSubmitting}
@@ -1130,6 +1302,20 @@ export function InvoiceEditorModal({
                     >
                       Guardar como borrador
                     </button>
+                    {invoice && onDuplicateInvoice && (
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={() => {
+                          onDuplicateInvoice(invoice);
+                          onClose();
+                        }}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-white border border-black/[0.08] px-4 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-black/[0.04] disabled:opacity-50"
+                      >
+                        <Copy className="h-4 w-4 text-[#0071E3]" />
+                        Duplicar factura
+                      </button>
+                    )}
                   </>
                 )
               ) : documentType === 'proforma' ? (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   X,
   UploadCloud,
@@ -13,6 +13,8 @@ import {
   Sparkles,
   AlertTriangle,
   RefreshCw,
+  Plus,
+  Search,
 } from 'lucide-react';
 import type {
   ActivityType,
@@ -48,6 +50,7 @@ interface AiExpenseModalProps {
   onSaveExpense: (expense: ReceivedInvoice, file?: File | null) => Promise<void>;
   onDeleteExpense?: (expense: ReceivedInvoice) => Promise<void>;
   onTogglePaymentStatus?: (expense: ReceivedInvoice) => Promise<void>;
+  onQuickCreateSupplier?: (contact: Contact) => Promise<Contact | void> | void;
 }
 
 export function AiExpenseModal({
@@ -60,6 +63,7 @@ export function AiExpenseModal({
   onSaveExpense,
   onDeleteExpense,
   onTogglePaymentStatus,
+  onQuickCreateSupplier,
 }: AiExpenseModalProps) {
   const isEditing = Boolean(expense);
 
@@ -95,6 +99,15 @@ export function AiExpenseModal({
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
 
+  // Quick supplier search & creation
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [showInlineNewSupplier, setShowInlineNewSupplier] = useState(false);
+  const [newSupName, setNewSupName] = useState('');
+  const [newSupNif, setNewSupNif] = useState('');
+  const [newSupAccountCode, setNewSupAccountCode] = useState('');
+  const [newSupEmail, setNewSupEmail] = useState('');
+  const [isSavingQuickSupplier, setIsSavingQuickSupplier] = useState(false);
+
   // Rehydrate form when opening or changing expense
   useEffect(() => {
     if (!isOpen) return;
@@ -106,6 +119,8 @@ export function AiExpenseModal({
     setIsAnalyzing(false);
     setHasAnalyzed(false);
     setAnalysisWarnings([]);
+    setShowInlineNewSupplier(false);
+    setSupplierSearch('');
 
     if (expense) {
       // Editing existing expense
@@ -353,6 +368,17 @@ export function AiExpenseModal({
   );
 
   const pgcName = PGC_EXPENSE_ACCOUNTS[pgcCode] || 'Otros servicios';
+
+  const filteredSuppliers = useMemo(() => {
+    if (!supplierSearch.trim()) return suppliers;
+    const q = supplierSearch.toLowerCase();
+    return suppliers.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.nif.toLowerCase().includes(q) ||
+        (Boolean(s.accountCode) && s.accountCode!.toLowerCase().includes(q))
+    );
+  }, [suppliers, supplierSearch]);
 
   const handleConfirmSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -671,24 +697,138 @@ export function AiExpenseModal({
                   <label htmlFor="expense-supplier-select" className="block text-[13px] font-medium text-[#1D1D1F]">
                     Proveedor
                   </label>
-                  <span className="text-[12px] text-[#6E6E73]">
-                    Vincula con tu agenda de proveedores
-                  </span>
+                  {!isEditing && onQuickCreateSupplier && !showInlineNewSupplier && (
+                    <button
+                      type="button"
+                      onClick={() => setShowInlineNewSupplier(true)}
+                      className="inline-flex items-center gap-1 text-[12px] font-medium text-[#0071E3] hover:underline"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Nuevo proveedor
+                    </button>
+                  )}
                 </div>
-                <select
-                  id="expense-supplier-select"
-                  value={selectedSupplierId}
-                  onChange={(e) => handleSupplierSelect(e.target.value)}
-                  className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none"
-                >
-                  <option value="">— Seleccionar proveedor existente —</option>
-                  <option value="__custom__">✎ Escribir proveedor manualmente (ticket / puntual)</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.nif}) {s.activity ? `· ${s.activity}` : ''}
-                    </option>
-                  ))}
-                </select>
+
+                {showInlineNewSupplier ? (
+                  <div className="rounded-xl border border-[#0071E3]/20 bg-[#F5F5F7] p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[12px] font-semibold text-[#1D1D1F]">Alta rápida de proveedor</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineNewSupplier(false)}
+                        className="text-[11px] text-[#6E6E73] hover:text-[#1D1D1F]"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Razón social / Nombre *"
+                        value={newSupName}
+                        onChange={(e) => setNewSupName(e.target.value)}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        placeholder="NIF / CIF (opcional)"
+                        value={newSupNif}
+                        onChange={(e) => setNewSupNif(e.target.value.toUpperCase())}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Subcuenta PGC (ej. 41000001)"
+                        value={newSupAccountCode}
+                        onChange={(e) => setNewSupAccountCode(e.target.value.trim())}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                      <input
+                        type="email"
+                        placeholder="Email (opcional)"
+                        value={newSupEmail}
+                        onChange={(e) => setNewSupEmail(e.target.value)}
+                        className="rounded-lg bg-white px-2.5 py-1.5 text-[12px] text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={isSavingQuickSupplier || !newSupName.trim()}
+                        onClick={async () => {
+                          if (!newSupName.trim()) return;
+                          try {
+                            setIsSavingQuickSupplier(true);
+                            const newContact: Contact = {
+                              id: `sup-${Date.now()}`,
+                              kind: 'proveedor',
+                              name: newSupName.trim(),
+                              nif: newSupNif.trim().toUpperCase(),
+                              accountCode: newSupAccountCode.trim() || undefined,
+                              email: newSupEmail.trim() || `contacto@${newSupName.trim().toLowerCase().replace(/[^a-z0-9]/g, '') || 'proveedor'}.es`,
+                              address: 'Dirección no especificada',
+                              activity,
+                              defaultIva: ivaRate,
+                              defaultIrpf: irpfRate,
+                              status: 'Activo',
+                              historicalVolume: 0,
+                            };
+                            if (onQuickCreateSupplier) {
+                              await onQuickCreateSupplier(newContact);
+                            }
+                            setSelectedSupplierId(newContact.id);
+                            setSupplierName(newContact.name);
+                            setSupplierNif(newContact.nif);
+                            setShowInlineNewSupplier(false);
+                            setNewSupName('');
+                            setNewSupNif('');
+                            setNewSupAccountCode('');
+                            setNewSupEmail('');
+                          } catch (err: any) {
+                            setErrorMsg(err.message || 'Error al crear proveedor rápido.');
+                          } finally {
+                            setIsSavingQuickSupplier(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#0071E3] px-3 py-1 text-[12px] font-medium text-white hover:bg-[#0077ED] disabled:opacity-50"
+                      >
+                        {isSavingQuickSupplier && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Crear y seleccionar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {suppliers.length > 5 && (
+                      <div className="relative mb-1">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#86868B]" />
+                        <input
+                          type="text"
+                          placeholder="Buscar por nombre, NIF o subcuenta..."
+                          value={supplierSearch}
+                          onChange={(e) => setSupplierSearch(e.target.value)}
+                          className="w-full rounded-lg bg-[#F5F5F7] pl-8 pr-2.5 py-1 text-[12px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none"
+                        />
+                      </div>
+                    )}
+                    <select
+                      id="expense-supplier-select"
+                      value={selectedSupplierId}
+                      onChange={(e) => handleSupplierSelect(e.target.value)}
+                      className="w-full rounded-xl bg-[#F5F5F7] px-3.5 py-2.5 text-[14px] text-[#1D1D1F] border border-transparent focus:bg-white focus:border-[#0071E3] focus:outline-none"
+                    >
+                      <option value="">— Seleccionar proveedor existente —</option>
+                      <option value="__custom__">✎ Escribir proveedor manualmente (ticket / puntual)</option>
+                      {filteredSuppliers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.accountCode ? `[${s.accountCode}] ` : ''}{s.name} ({s.nif || 'Sin NIF'}) {s.activity ? `· ${s.activity}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>

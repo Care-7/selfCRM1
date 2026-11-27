@@ -165,3 +165,15 @@ test('parseAndValidateContactsCsv accepts distinct names with empty NIF', () => 
   assert.equal(result.summary.duplicates, 0);
 });
 
+test('parseAndValidateContactsCsv correctly parses subcuenta PGC / account_code', () => {
+  const rawCsv =
+    'Nombre;NIF;Subcuenta PGC;Email\n' +
+    '"Cliente ContaSol 1";"B99887762";"43000001";"cli1@test.es"\n' +
+    '"Cliente ContaSol 2";"";"43000002";"cli2@test.es"';
+
+  const result = parseAndValidateContactsCsv(rawCsv, 'cliente');
+  assert.equal(result.summary.valid, 2);
+  assert.equal(result.validRows[0].account_code, '43000001');
+  assert.equal(result.validRows[1].account_code, '43000002');
+});
+

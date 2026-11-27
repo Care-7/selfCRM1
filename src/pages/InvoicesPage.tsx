@@ -13,6 +13,7 @@ import {
   FileCheck2,
   Download,
   Loader2,
+  Copy,
 } from 'lucide-react';
 import { downloadInvoicePdf } from '../services/invoicePdfService';
 import type {
@@ -51,6 +52,7 @@ interface InvoicesPageProps {
   onOpenAiExpenseModal: () => void;
   onConvertToInvoice?: (doc: IssuedInvoice) => void;
   onSelectReceivedInvoice?: (invoice: ReceivedInvoice) => void;
+  onDuplicateInvoice?: (invoice: IssuedInvoice) => void;
 }
 
 const TAB_OPTIONS: { value: InvoicesTab; label: string }[] = [
@@ -77,6 +79,7 @@ export function InvoicesPage({
   onOpenAiExpenseModal,
   onConvertToInvoice,
   onSelectReceivedInvoice,
+  onDuplicateInvoice,
 }: InvoicesPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'Todas' | IssuedInvoiceStatus>('Todas');
@@ -506,6 +509,21 @@ export function InvoicesPage({
                                 <Download className="h-3.5 w-3.5" />
                               )}
                             </button>
+
+                            {onDuplicateInvoice && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDuplicateInvoice(inv);
+                                }}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#1D1D1F] bg-black/[0.05] hover:bg-black/[0.1] transition-colors"
+                                title="Duplicar factura en 1 clic (clonando conceptos)"
+                                aria-label={`Duplicar documento ${inv.number}`}
+                              >
+                                <Copy className="h-3.5 w-3.5 text-[#6E6E73]" />
+                              </button>
+                            )}
 
                             {docType === 'proforma' ? (
                               inv.status !== 'Convertida' ? (

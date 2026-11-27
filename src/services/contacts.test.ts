@@ -69,6 +69,7 @@ test('clientRowToContact and supplierRowToContact correctly map Supabase rows to
     activity_id: 'act-111',
     name: 'Comunidad Propietarios Alcalá 42',
     tax_id: 'H12345678',
+    account_code: '43000001',
     email: 'comunidad@alcala42.es',
     phone: '+34 910 000 000',
     address: 'C/ Alcalá 42',
@@ -90,6 +91,7 @@ test('clientRowToContact and supplierRowToContact correctly map Supabase rows to
   assert.equal(contact.kind, 'cliente');
   assert.equal(contact.name, 'Comunidad Propietarios Alcalá 42');
   assert.equal(contact.nif, 'H12345678');
+  assert.equal(contact.accountCode, '43000001');
   assert.equal(contact.activity, 'Gestión Comunidades');
   assert.equal(contact.activityId, 'act-111');
   assert.equal(contact.defaultIva, 21);
@@ -101,6 +103,7 @@ test('clientRowToContact and supplierRowToContact correctly map Supabase rows to
     activity_id: null,
     name: 'Suministros Informáticos SL',
     tax_id: 'B88776655',
+    account_code: '41000001',
     email: 'pedidos@suministros.es',
     phone: null,
     address: 'Polígono Industrial 5',
@@ -120,6 +123,7 @@ test('clientRowToContact and supplierRowToContact correctly map Supabase rows to
   const supContact = supplierRowToContact(supplierRow, mockActivities);
   assert.equal(supContact.id, 'sup-001');
   assert.equal(supContact.kind, 'proveedor');
+  assert.equal(supContact.accountCode, '41000001');
   assert.equal(supContact.status, 'Inactivo');
   assert.equal(supContact.activity, 'Gestión Comunidades'); // falls back to first activity
 });
@@ -142,6 +146,7 @@ test('clientRowToContact preserves 0% VAT rate (exempt) without incorrectly fall
     activity_id: null,
     name: 'Asociación Sin Ánimo de Lucro',
     tax_id: 'G12345678',
+    account_code: null,
     email: 'contacto@asociacion.es',
     phone: null,
     address: 'Plaza Mayor 1',
@@ -215,6 +220,7 @@ test('clientRowToContact and supplierRowToContact map null tax_id to empty strin
     activity_id: null,
     name: 'Cliente Sin NIF',
     tax_id: null,
+    account_code: null,
     email: null,
     phone: null,
     address: null,
@@ -240,6 +246,7 @@ test('clientRowToContact and supplierRowToContact map null tax_id to empty strin
     activity_id: null,
     name: 'Proveedor Sin NIF',
     tax_id: null,
+    account_code: null,
     email: null,
     phone: null,
     address: null,

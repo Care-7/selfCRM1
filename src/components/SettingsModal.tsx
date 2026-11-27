@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import type { TaxRegime, UserProfile } from '../types';
 import { useTenant } from '../context/TenantContext';
-import { createActivity, toggleActivityActive } from '../services/activitiesService';
+import { createActivity, toggleActivityActive, updateActivity } from '../services/activitiesService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -48,6 +48,7 @@ export function SettingsModal({
   const [newActName, setNewActName] = useState('');
   const [newActIae, setNewActIae] = useState('');
   const [newActPrefix, setNewActPrefix] = useState('');
+  const [newActNextNumber, setNewActNextNumber] = useState<number>(1);
   const [newActVat, setNewActVat] = useState(21);
   const [newActIrpf, setNewActIrpf] = useState(15);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -63,6 +64,7 @@ export function SettingsModal({
     setRegime(profile.regime);
     setVeriFactuEnabled(profile.veriFactuEnabled);
     setIsAddingActivity(false);
+    setNewActNextNumber(1);
     setActivityError(null);
   }, [isOpen, profile]);
 
@@ -107,6 +109,7 @@ export function SettingsModal({
         name: newActName.trim(),
         iae_code: newActIae.trim() || null,
         invoice_series_prefix: newActPrefix.trim().toUpperCase(),
+        next_invoice_number: Number(newActNextNumber) || 1,
         default_vat_rate: Number(newActVat),
         default_irpf_rate: Number(newActIrpf),
       });
@@ -116,6 +119,7 @@ export function SettingsModal({
       setNewActName('');
       setNewActIae('');
       setNewActPrefix('');
+      setNewActNextNumber(1);
       setNewActVat(21);
       setNewActIrpf(15);
     } catch (err: any) {
@@ -448,7 +452,7 @@ export function SettingsModal({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-[12px] font-medium text-[#1D1D1F] mb-1">
                         Código IAE (Opcional)
@@ -463,13 +467,26 @@ export function SettingsModal({
                     </div>
                     <div>
                       <label className="block text-[12px] font-medium text-[#1D1D1F] mb-1">
-                        Prefijo de Serie *
+                        Prefijo Serie *
                       </label>
                       <input
                         type="text"
                         placeholder="ej. CC-2026, EXP-"
                         value={newActPrefix}
                         onChange={(e) => setNewActPrefix(e.target.value.toUpperCase())}
+                        className="w-full rounded-xl bg-white px-3 py-2 text-[13px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[12px] font-medium text-[#1D1D1F] mb-1">
+                        Siguiente Nº
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="1"
+                        value={newActNextNumber}
+                        onChange={(e) => setNewActNextNumber(Math.max(1, parseInt(e.target.value, 10) || 1))}
                         className="w-full rounded-xl bg-white px-3 py-2 text-[13px] font-mono text-[#1D1D1F] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none"
                       />
                     </div>
@@ -553,12 +570,32 @@ export function SettingsModal({
                             )}
                           </div>
 
-                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#6E6E73]">
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-[#6E6E73]">
                             <span>
                               Serie:{' '}
                               <strong className="font-mono text-[#1D1D1F]">
                                 {act.invoice_series_prefix}
                               </strong>
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span>Siguiente núm:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                defaultValue={act.next_invoice_number ?? 1}
+                                onBlur={async (e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  if (organization && val > 0 && val !== act.next_invoice_number) {
+                                    try {
+                                      await updateActivity(act.id, organization.id, { next_invoice_number: val });
+                                      await refreshTenant();
+                                    } catch (err: any) {
+                                      console.error('Error actualizando contador de serie:', err);
+                                    }
+                                  }
+                                }}
+                                className="w-16 rounded-lg bg-[#F5F5F7] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#1D1D1F] border border-black/[0.08] focus:bg-white focus:border-[#0071E3] focus:outline-none"
+                              />
                             </span>
                             {act.iae_code && (
                               <span>

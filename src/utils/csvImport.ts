@@ -6,6 +6,7 @@ import { validateSpanishTaxId } from './validators';
 export interface ParsedContactRow {
   name: string;
   tax_id: string;
+  account_code?: string;
   email?: string;
   phone?: string;
   address?: string;
@@ -174,6 +175,7 @@ export function normalizeHeaderKey(header: string): string {
 type ContactFieldKey =
   | 'name'
   | 'taxId'
+  | 'accountCode'
   | 'email'
   | 'phone'
   | 'address'
@@ -213,6 +215,18 @@ const HEADER_SYNONYMS: Record<ContactFieldKey, string[]> = {
     'identificacionfiscal',
     'documento',
     'vatnumber',
+  ],
+  accountCode: [
+    'cuentapgc',
+    'subcuenta',
+    'subcuentapgc',
+    'codcli',
+    'codpro',
+    'codigocliente',
+    'codigoproveedor',
+    'accountcode',
+    'subcuentacontable',
+    'cuentacontable',
   ],
   email: [
     'email',
@@ -284,6 +298,7 @@ const HEADER_SYNONYMS: Record<ContactFieldKey, string[]> = {
 const FIELD_LABELS_ES: Record<ContactFieldKey, string> = {
   name: 'Nombre o razón social',
   taxId: 'NIF / CIF / NIE',
+  accountCode: 'Subcuenta PGC',
   email: 'Email de contacto',
   phone: 'Teléfono',
   address: 'Domicilio fiscal',
@@ -434,6 +449,7 @@ export function parseAndValidateContactsCsv(
     }
 
     // Parse additional fields
+    const accountCode = fieldIndexMap.accountCode !== undefined ? row[fieldIndexMap.accountCode]?.trim() : undefined;
     const email = fieldIndexMap.email !== undefined ? row[fieldIndexMap.email]?.trim() : undefined;
     const phone = fieldIndexMap.phone !== undefined ? row[fieldIndexMap.phone]?.trim() : undefined;
     const address = fieldIndexMap.address !== undefined ? row[fieldIndexMap.address]?.trim() : undefined;
@@ -455,6 +471,7 @@ export function parseAndValidateContactsCsv(
     validRows.push({
       name: rawName,
       tax_id: normalizedTaxId,
+      account_code: accountCode || undefined,
       email: email || undefined,
       phone: phone || undefined,
       address: address || undefined,

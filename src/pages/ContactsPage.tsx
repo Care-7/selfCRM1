@@ -55,7 +55,8 @@ export function ContactsPage({
       return (
         contact.name.toLowerCase().includes(q) ||
         contact.nif.toLowerCase().includes(q) ||
-        contact.email.toLowerCase().includes(q)
+        contact.email.toLowerCase().includes(q) ||
+        (Boolean(contact.accountCode) && contact.accountCode!.toLowerCase().includes(q))
       );
     });
   }, [contacts, effectiveActivity, searchQuery]);
@@ -112,8 +113,8 @@ export function ContactsPage({
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label={`Buscar ${title.toLowerCase()} por nombre, NIF o correo`}
-            placeholder={`Buscar ${title.toLowerCase()} por nombre, NIF o email…`}
+            aria-label={`Buscar ${title.toLowerCase()} por nombre, NIF, subcuenta o correo`}
+            placeholder={`Buscar ${title.toLowerCase()} por nombre, NIF, subcuenta…`}
             className="w-full rounded-xl bg-white py-2.5 pl-10 pr-4 text-[14px] text-[#1D1D1F] placeholder:text-[#86868B] shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.04] transition-all focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/15"
           />
         </div>
@@ -183,7 +184,7 @@ export function ContactsPage({
               <thead>
                 <tr className="border-b border-black/[0.05] text-[12px] font-medium text-[#6E6E73]">
                   <th className="py-3.5 pl-6 pr-4 font-medium">Nombre / Razón social</th>
-                  <th className="py-3.5 px-4 font-medium">NIF / CIF</th>
+                  <th className="py-3.5 px-4 font-medium">NIF / Subcuenta</th>
                   <th className="py-3.5 px-4 font-medium">Actividad</th>
                   <th className="py-3.5 px-4 font-medium text-right">
                     {isClient ? 'Total facturado' : 'Total gastado'}
@@ -221,7 +222,12 @@ export function ContactsPage({
                         </button>
                       </td>
                       <td className="py-4 px-4 font-mono text-[13px] tabular-nums text-[#1D1D1F] whitespace-nowrap">
-                        {contact.nif || '—'}
+                        <div>{contact.nif || '—'}</div>
+                        {contact.accountCode && (
+                          <div className="text-[11px] font-mono text-[#0071E3] mt-0.5">
+                            Cta: {contact.accountCode}
+                          </div>
+                        )}
                       </td>
                       <td className="py-4 px-4 text-[13px] text-[#6E6E73] whitespace-nowrap">
                         {contact.activity}

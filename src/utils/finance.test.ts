@@ -256,4 +256,79 @@ test('financial calculations handle completely empty datasets cleanly with zero 
   }
 });
 
+test('getNextInvoiceNumber honors starting sequence startNumber for series', () => {
+  // Empty dataset with configured starting number 45
+  const nextFrom45 = getNextInvoiceNumber([], 'Contabilidad Comunidades', 'normal', 45);
+  assert.equal(nextFrom45.number, 'CC-2026-045');
+
+  // When existing max is already 45, next is 046
+  const existingInvoices: any[] = [
+    {
+      id: 'inv-1',
+      number: 'CC-2026-045',
+      series: 'CC',
+      documentType: 'normal',
+    },
+  ];
+  const nextFromExisting = getNextInvoiceNumber(existingInvoices, 'Contabilidad Comunidades', 'normal', 45);
+  assert.equal(nextFromExisting.number, 'CC-2026-046');
+
+  // Proforma with start number
+  const nextPro45 = getNextInvoiceNumber([], 'Contabilidad Comunidades', 'proforma', 45);
+  assert.equal(nextPro45.number, 'PRO-2026-0045');
+});
+
+test('invoice duplication correctly clones lines and resets VeriFactu lock and hashes', () => {
+  const originalInvoice: any = {
+    id: 'inv-orig-1',
+    number: 'CC-2026-001',
+    series: 'CC',
+    documentType: 'normal',
+    clientId: 'cli-1',
+    clientName: 'Cliente Test',
+    clientNif: 'B12345678',
+    activity: 'Contabilidad Comunidades',
+    issueDate: '2026-10-01',
+    dueDate: '2026-10-31',
+    lines: [
+      { id: 'line-1', description: 'Honorarios Octubre', quantity: 1, unitPrice: 500 },
+      { id: 'line-2', description: 'Gestión Extra', quantity: 2, unitPrice: 50 },
+    ],
+    ivaRate: 21,
+    irpfRate: 15,
+    status: 'Cobrada',
+    veriFactuLocked: true,
+    veriFactuHash: 'VF26-ABCD-1234-5678',
+    veriFactuTimestamp: '2026-10-01T12:00:00Z',
+  };
+
+  const nextNumberInfo = getNextInvoiceNumber([originalInvoice], originalInvoice.activity, 'normal');
+  const duplicated = {
+    ...originalInvoice,
+    id: `inv-dup-${Date.now()}`,
+    number: nextNumberInfo.number,
+    series: nextNumberInfo.series,
+    status: 'Borrador',
+    issueDate: REFERENCE_DATE,
+    dueDate: '2026-12-24',
+    veriFactuLocked: false,
+    veriFactuHash: undefined,
+    veriFactuTimestamp: undefined,
+    lines: originalInvoice.lines.map((l: any, idx: number) => ({
+      ...l,
+      id: `line-dup-${Date.now()}-${idx}`,
+    })),
+  };
+
+  assert.equal(duplicated.status, 'Borrador');
+  assert.equal(duplicated.veriFactuLocked, false);
+  assert.equal(duplicated.veriFactuHash, undefined);
+  assert.equal(duplicated.veriFactuTimestamp, undefined);
+  assert.equal(duplicated.number, 'CC-2026-002');
+  assert.equal(duplicated.lines.length, 2);
+  assert.notEqual(duplicated.lines[0].id, originalInvoice.lines[0].id);
+  assert.equal(duplicated.lines[0].description, 'Honorarios Octubre');
+  assert.equal(duplicated.lines[0].unitPrice, 500);
+});
+
 

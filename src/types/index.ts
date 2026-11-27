@@ -38,6 +38,7 @@ export interface Contact {
   notes?: string;
   paymentTerms?: string;
   iban?: string;
+  accountCode?: string;
 }
 
 export interface InvoiceLine {

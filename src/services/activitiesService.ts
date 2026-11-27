@@ -68,6 +68,7 @@ export async function createActivity(
       invoice_series_prefix: trimmedPrefix,
       default_vat_rate: vatRate,
       default_irpf_rate: irpfRate,
+      next_invoice_number: input.next_invoice_number != null ? Number(input.next_invoice_number) : 1,
       is_active: true,
     })
     .select('*')
@@ -149,6 +150,10 @@ export async function updateActivity(
     const rate = Number(updates.default_irpf_rate);
     if (isNaN(rate) || rate < 0) throw new Error('Tipo de IRPF no válido.');
     payload.default_irpf_rate = rate;
+  }
+  if (updates.next_invoice_number !== undefined) {
+    const num = updates.next_invoice_number != null ? Number(updates.next_invoice_number) : 1;
+    payload.next_invoice_number = isNaN(num) || num < 1 ? 1 : Math.floor(num);
   }
 
   const { data, error } = await (supabase

@@ -40,6 +40,7 @@ export async function createSupplier(input: CreateSupplierInput): Promise<Suppli
       activity_id: sanitizedActivityId,
       name: input.name.trim(),
       tax_id: normalizedTaxId || null,
+      account_code: input.account_code?.trim() || null,
       email: input.email?.trim() || null,
       phone: input.phone?.trim() || null,
       address: input.address?.trim() || null,
@@ -83,6 +84,9 @@ export async function updateSupplier(
   if (input.tax_id !== undefined) {
     const norm = normalizeTaxId(input.tax_id);
     updatePayload.tax_id = norm || null;
+  }
+  if (input.account_code !== undefined) {
+    updatePayload.account_code = input.account_code?.trim() || null;
   }
   if (input.activity_id !== undefined) {
     updatePayload.activity_id = isValidUuid(input.activity_id) ? input.activity_id : null;

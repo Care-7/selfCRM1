@@ -41,6 +41,7 @@ export interface BusinessActivity {
   invoice_series_prefix: string;
   default_vat_rate: number;
   default_irpf_rate: number;
+  next_invoice_number?: number | null;
   is_active: boolean;
   created_at: string;
 }
@@ -54,6 +55,7 @@ export interface CreateBusinessActivityInput {
   invoice_series_prefix: string;
   default_vat_rate?: number;
   default_irpf_rate?: number;
+  next_invoice_number?: number | null;
 }
 
 /**
@@ -83,6 +85,7 @@ export interface ClientRow {
   activity_id: string | null;
   name: string;
   tax_id: string | null;
+  account_code: string | null;
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -105,6 +108,7 @@ export interface SupplierRow {
   activity_id: string | null;
   name: string;
   tax_id: string | null;
+  account_code: string | null;
   email: string | null;
   phone: string | null;
   address: string | null;
@@ -126,6 +130,7 @@ export interface CreateClientInput {
   activity_id?: string | null;
   name: string;
   tax_id?: string | null;
+  account_code?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -147,6 +152,7 @@ export interface CreateSupplierInput {
   activity_id?: string | null;
   name: string;
   tax_id?: string | null;
+  account_code?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
