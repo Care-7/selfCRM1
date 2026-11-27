@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, Plus, ChevronRight, Users, Loader2 } from 'lucide-react';
+import { Search, Plus, ChevronRight, Users, Loader2, BookOpen } from 'lucide-react';
 import type {
   ActivityFilter,
   Contact,
@@ -24,6 +24,7 @@ interface ContactsPageProps {
   isLoading?: boolean;
   onOpenContact: (contact: Contact) => void;
   onCreateContact: () => void;
+  onOpenLedger?: (contact: Contact) => void;
 }
 
 export function ContactsPage({
@@ -36,6 +37,7 @@ export function ContactsPage({
   isLoading = false,
   onOpenContact,
   onCreateContact,
+  onOpenLedger,
 }: ContactsPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [localActivity, setLocalActivity] = useState<ActivityFilter>('Todas las actividades');
@@ -241,15 +243,31 @@ export function ContactsPage({
                           tone={contact.status === 'Activo' ? 'success' : 'neutral'}
                         />
                       </td>
-                      <td className="py-4 pl-2 pr-6 text-right">
-                        <button
-                          type="button"
-                          onClick={() => onOpenContact(contact)}
-                          aria-label={`Abrir ficha de ${contact.name}`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#86868B] transition-colors hover:bg-white hover:text-[#1D1D1F]"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </button>
+                      <td className="py-4 pl-2 pr-6 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1">
+                          {onOpenLedger && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenLedger(contact);
+                              }}
+                              title="Ver Libro Mayor contable"
+                              aria-label={`Ver Libro Mayor contable de ${contact.name}`}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#0071E3] transition-colors hover:bg-[#EBF5FF]"
+                            >
+                              <BookOpen className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onOpenContact(contact)}
+                            aria-label={`Abrir ficha de ${contact.name}`}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#86868B] transition-colors hover:bg-white hover:text-[#1D1D1F]"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

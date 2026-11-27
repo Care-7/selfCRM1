@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Mail, MapPin, FileText, Loader2, Trash2, Archive, ArchiveRestore } from 'lucide-react';
+import { X, Mail, MapPin, FileText, Loader2, Trash2, Archive, ArchiveRestore, BookOpen } from 'lucide-react';
 import type {
   ActivityType,
   Contact,
@@ -26,6 +26,7 @@ interface ContactSlideOverProps {
   onSave: (contact: Contact, isNew: boolean) => Promise<boolean | void> | void;
   onDelete?: (id: string, kind: ContactKind) => Promise<void> | void;
   onArchive?: (id: string, kind: ContactKind, isActive: boolean) => Promise<void> | void;
+  onOpenLedger?: (contact: Contact) => void;
 }
 
 export function ContactSlideOver({
@@ -40,6 +41,7 @@ export function ContactSlideOver({
   onSave,
   onDelete,
   onArchive,
+  onOpenLedger,
 }: ContactSlideOverProps) {
   const [name, setName] = useState('');
   const [nif, setNif] = useState('');
@@ -492,6 +494,17 @@ export function ContactSlideOver({
                 </h3>
 
                 <div className="flex flex-wrap items-center gap-2">
+                  {onOpenLedger && contact && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenLedger(contact)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-[#0071E3]/25 bg-[#F5FAFF] px-3 py-2 text-[12px] font-medium text-[#0071E3] shadow-[0_1px_2px_rgba(0,113,227,0.06)] hover:bg-[#EBF5FF] transition-colors"
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                      Ver Libro Mayor
+                    </button>
+                  )}
+
                   {onArchive && (
                     <button
                       type="button"

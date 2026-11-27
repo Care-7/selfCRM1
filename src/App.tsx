@@ -35,7 +35,7 @@ import type { ParsedContactRow } from './utils/csvImport';
 import { DashboardPage } from './pages/DashboardPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { InvoicesPage, type InvoicesTab } from './pages/InvoicesPage';
-import { AccountingPage } from './pages/AccountingPage';
+import { AccountingPage, type AccountingSubView } from './pages/AccountingPage';
 import { TaxesPage } from './pages/TaxesPage';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { AuthPage } from './pages/AuthPage';
@@ -141,6 +141,23 @@ function MainApp() {
     open: boolean;
     expense: ReceivedInvoice | null;
   }>({ open: false, expense: null });
+
+  const [accountingNav, setAccountingNav] = useState<{
+    subView: AccountingSubView;
+    accountFilter?: string;
+    searchFilter?: string;
+  }>({ subView: 'balance' });
+
+  const handleOpenLedgerForContact = (contact: Contact) => {
+    const targetAccountCode = contact.accountCode || (contact.kind === 'cliente' ? '430' : '410');
+    setAccountingNav({
+      subView: 'mayor',
+      accountFilter: targetAccountCode,
+      searchFilter: contact.name,
+    });
+    setContactModal((prev) => ({ ...prev, open: false }));
+    setActiveSection('contabilidad');
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [migrationModalOpen, setMigrationModalOpen] = useState(false);
 
@@ -1063,6 +1080,7 @@ function MainApp() {
               onCreateContact={() =>
                 setContactModal({ open: true, kind: 'cliente', contact: null })
               }
+              onOpenLedger={handleOpenLedgerForContact}
             />
           )}
 
@@ -1081,6 +1099,7 @@ function MainApp() {
               onCreateContact={() =>
                 setContactModal({ open: true, kind: 'proveedor', contact: null })
               }
+              onOpenLedger={handleOpenLedgerForContact}
             />
           )}
 
@@ -1105,6 +1124,11 @@ function MainApp() {
               issuedInvoices={issuedInvoices}
               receivedInvoices={receivedInvoices}
               activityFilter={activityFilter}
+              clients={clients}
+              suppliers={suppliers}
+              initialSubView={accountingNav.subView}
+              initialAccountFilter={accountingNav.accountFilter}
+              initialSearchFilter={accountingNav.searchFilter}
             />
           )}
 
@@ -1133,6 +1157,7 @@ function MainApp() {
         onSave={handleSaveContact}
         onDelete={handleDeleteContact}
         onArchive={handleArchiveContact}
+        onOpenLedger={handleOpenLedgerForContact}
       />
 
       <InvoiceEditorModal

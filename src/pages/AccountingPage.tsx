@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -8,10 +8,12 @@ import {
   Search,
   TrendingUp,
 } from 'lucide-react';
-import type { ActivityFilter, IssuedInvoice, ReceivedInvoice } from '../types';
+import type { ActivityFilter, Contact, IssuedInvoice, ReceivedInvoice } from '../types';
 import {
+  downloadGeneralLedgerCsv,
   downloadJournalCsv,
   generateAccountingSnapshot,
+  generateGeneralLedger,
   type PgcAccountingPeriod,
 } from '../utils/pgcAccounting';
 import { formatCurrency, formatDateES } from '../utils/finance';
@@ -19,18 +21,24 @@ import { REFERENCE_DATE } from '../data/mockData';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusBadge } from '../components/StatusBadge';
 
-export type AccountingSubView = 'balance' | 'pyg' | 'trial' | 'diario' | 'ratios';
+export type AccountingSubView = 'balance' | 'pyg' | 'trial' | 'mayor' | 'diario' | 'ratios';
 
 interface AccountingPageProps {
   issuedInvoices: IssuedInvoice[];
   receivedInvoices: ReceivedInvoice[];
   activityFilter: ActivityFilter;
+  clients?: Contact[];
+  suppliers?: Contact[];
+  initialSubView?: AccountingSubView;
+  initialAccountFilter?: string;
+  initialSearchFilter?: string;
 }
 
 const SUBVIEW_OPTIONS: { value: AccountingSubView; label: string }[] = [
   { value: 'balance', label: 'Balance de Situación' },
   { value: 'pyg', label: 'Pérdidas y Ganancias' },
   { value: 'trial', label: 'Sumas y Saldos' },
+  { value: 'mayor', label: 'Libro Mayor' },
   { value: 'diario', label: 'Libro Diario' },
   { value: 'ratios', label: 'Ratios' },
 ];
@@ -47,9 +55,52 @@ export function AccountingPage({
   issuedInvoices,
   receivedInvoices,
   activityFilter,
+  clients,
+  suppliers,
+  initialSubView,
+  initialAccountFilter,
+  initialSearchFilter,
 }: AccountingPageProps) {
-  const [subView, setSubView] = useState<AccountingSubView>('balance');
+  // Query param check if props not provided
+  const queryTab =
+    typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('tab') as AccountingSubView | null)
+      : null;
+  const queryAccount =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('account') || undefined
+      : undefined;
+
+  const [subView, setSubView] = useState<AccountingSubView>(
+    () => initialSubView || queryTab || 'balance'
+  );
   const [journalSearch, setJournalSearch] = useState('');
+  const [ledgerAccountFilter, setLedgerAccountFilter] = useState<string>(
+    () => initialAccountFilter || queryAccount || ''
+  );
+  const [ledgerSearch, setLedgerSearch] = useState<string>(
+    () => initialSearchFilter || ''
+  );
+  const [selectedAccountCodeState, setSelectedAccountCodeState] = useState<string>('');
+
+  useEffect(() => {
+    if (initialSubView) {
+      setSubView(initialSubView);
+    }
+  }, [initialSubView]);
+
+  useEffect(() => {
+    if (initialAccountFilter !== undefined) {
+      setLedgerAccountFilter(initialAccountFilter);
+      setSelectedAccountCodeState(initialAccountFilter);
+    }
+  }, [initialAccountFilter]);
+
+  useEffect(() => {
+    if (initialSearchFilter !== undefined) {
+      setLedgerSearch(initialSearchFilter);
+    }
+  }, [initialSearchFilter]);
 
   // Extract available years from real invoices or fallback to reference date
   const availableYears = useMemo(() => {
@@ -84,8 +135,55 @@ export function AccountingPage({
       year: selectedYear,
       period: selectedPeriod,
       activityFilter,
+      clients,
+      suppliers,
     });
-  }, [issuedInvoices, receivedInvoices, selectedYear, selectedPeriod, activityFilter]);
+  }, [issuedInvoices, receivedInvoices, selectedYear, selectedPeriod, activityFilter, clients, suppliers]);
+
+  // Generate full General Ledger (Libro Mayor)
+  const generalLedger = useMemo(() => {
+    return generateGeneralLedger(snapshot);
+  }, [snapshot]);
+
+  // Determine active account in Libro Mayor
+  const currentAccountCode = useMemo(() => {
+    if (selectedAccountCodeState && generalLedger.accountMap[selectedAccountCodeState]) {
+      return selectedAccountCodeState;
+    }
+    if (ledgerAccountFilter) {
+      const direct = generalLedger.accounts.find(
+        (a) => a.accountCode.toLowerCase() === ledgerAccountFilter.toLowerCase()
+      );
+      if (direct) return direct.accountCode;
+      const prefix = generalLedger.accounts.find(
+        (a) => a.accountCode.toLowerCase().startsWith(ledgerAccountFilter.toLowerCase())
+      );
+      if (prefix) return prefix.accountCode;
+    }
+    if (ledgerSearch) {
+      const match = generalLedger.accounts.find(
+        (a) =>
+          a.accountCode.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+          a.accountName.toLowerCase().includes(ledgerSearch.toLowerCase())
+      );
+      if (match) return match.accountCode;
+    }
+    return generalLedger.accounts[0]?.accountCode || '';
+  }, [selectedAccountCodeState, ledgerAccountFilter, ledgerSearch, generalLedger]);
+
+  const currentLedgerAccount = generalLedger.accountMap[currentAccountCode];
+
+  const filteredLedgerMovements = useMemo(() => {
+    if (!currentLedgerAccount) return [];
+    const q = ledgerSearch.trim().toLowerCase();
+    if (!q) return currentLedgerAccount.movements;
+    return currentLedgerAccount.movements.filter(
+      (m) =>
+        m.concept.toLowerCase().includes(q) ||
+        m.documentNumber.toLowerCase().includes(q) ||
+        String(m.entryNumber).includes(q)
+    );
+  }, [currentLedgerAccount, ledgerSearch]);
 
   // Filter journal entries for search
   const filteredJournalEntries = useMemo(() => {
@@ -570,7 +668,259 @@ export function AccountingPage({
         </div>
       )}
 
-      {/* Subview 4: Libro Diario */}
+      {/* Subview 4: Libro Mayor */}
+      {subView === 'mayor' && (
+        <div className="space-y-5">
+          {/* Controls: Account Selector, Search, CSV Downloads */}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-1 flex-col sm:flex-row gap-3">
+              {/* Account Dropdown */}
+              <div className="sm:w-80">
+                <label htmlFor="ledger-account-select" className="sr-only">
+                  Seleccionar cuenta contable
+                </label>
+                <select
+                  id="ledger-account-select"
+                  value={currentAccountCode}
+                  onChange={(e) => {
+                    setSelectedAccountCodeState(e.target.value);
+                    setLedgerAccountFilter(e.target.value);
+                  }}
+                  className="w-full rounded-xl bg-white px-3.5 py-2.5 text-[14px] font-medium text-[#1D1D1F] shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.06] focus:border-[#0071E3] focus:outline-none focus:ring-2 focus:ring-[#0071E3]/20"
+                >
+                  {generalLedger.accounts.length === 0 ? (
+                    <option value="">Sin cuentas con movimientos</option>
+                  ) : (
+                    generalLedger.accounts.map((acc) => (
+                      <option key={acc.accountCode} value={acc.accountCode}>
+                        {acc.accountCode} · {acc.accountName} ({acc.movements.length})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Text Search within Ledger */}
+              <div className="relative flex-1 max-w-md">
+                <Search
+                  className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#86868B]"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  aria-label="Buscar movimientos en el Libro Mayor"
+                  placeholder="Buscar concepto o documento…"
+                  className="w-full rounded-xl bg-white py-2.5 pl-10 pr-4 text-[14px] text-[#1D1D1F] placeholder:text-[#86868B] shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.04] focus:border-[#0071E3] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* CSV Export Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  downloadGeneralLedgerCsv(
+                    generalLedger,
+                    currentAccountCode,
+                    `Libro_Mayor_${currentAccountCode}_${selectedYear}_${selectedPeriod}.csv`
+                  )
+                }
+                disabled={!currentLedgerAccount || currentLedgerAccount.movements.length === 0}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-[13px] font-medium text-[#1D1D1F] shadow-sm border border-black/[0.08] hover:bg-[#F5F5F7] transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3]/40"
+              >
+                <Download className="h-4 w-4 text-[#6E6E73]" aria-hidden="true" />
+                <span>Exportar Cuenta (CSV)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  downloadGeneralLedgerCsv(
+                    generalLedger,
+                    undefined,
+                    `Libro_Mayor_Completo_${selectedYear}_${selectedPeriod}.csv`
+                  )
+                }
+                disabled={generalLedger.accounts.length === 0}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#0071E3] px-4 py-2.5 text-[13px] font-medium text-white shadow-sm hover:bg-[#0077ED] transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0071E3]/40"
+              >
+                <Download className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>Exportar Todo el Mayor</span>
+              </button>
+            </div>
+          </div>
+
+          {!currentLedgerAccount ? (
+            <div className="rounded-2xl bg-white p-12 text-center shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
+              <BookOpen className="mx-auto h-8 w-8 text-[#86868B] mb-2" aria-hidden="true" />
+              <p className="text-[15px] font-semibold text-[#1D1D1F]">
+                No hay movimientos en el Libro Mayor
+              </p>
+              <p className="mt-1 text-[13px] text-[#6E6E73] max-w-md mx-auto">
+                Registra facturas o gastos en el período seleccionado para consultar el extracto de cuentas contables.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Account Title & KPI Cards */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
+                  <p className="text-[12px] font-medium text-[#6E6E73] uppercase tracking-wider">
+                    Total Sumas Debe
+                  </p>
+                  <p className="mt-2 text-[24px] font-semibold tracking-[-0.02em] tabular-nums text-[#1D1D1F]">
+                    {formatCurrency(currentLedgerAccount.totalDebit)}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[#86868B]">Cargos contabilizados</p>
+                </div>
+
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
+                  <p className="text-[12px] font-medium text-[#6E6E73] uppercase tracking-wider">
+                    Total Sumas Haber
+                  </p>
+                  <p className="mt-2 text-[24px] font-semibold tracking-[-0.02em] tabular-nums text-[#1D1D1F]">
+                    {formatCurrency(currentLedgerAccount.totalCredit)}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[#86868B]">Abonos contabilizados</p>
+                </div>
+
+                <div className="rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03]">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[12px] font-medium text-[#6E6E73] uppercase tracking-wider">
+                      Saldo Vivo / Final
+                    </p>
+                    <StatusBadge
+                      label={
+                        currentLedgerAccount.closingBalanceType === 'D'
+                          ? 'Saldo Deudor'
+                          : currentLedgerAccount.closingBalanceType === 'H'
+                          ? 'Saldo Acreedor'
+                          : 'Saldada / Cero'
+                      }
+                      tone={
+                        currentLedgerAccount.closingBalanceType === 'D'
+                          ? 'accent'
+                          : currentLedgerAccount.closingBalanceType === 'H'
+                          ? 'warning'
+                          : 'success'
+                      }
+                    />
+                  </div>
+                  <p className="mt-2 text-[24px] font-semibold tracking-[-0.02em] tabular-nums text-[#1D1D1F]">
+                    {formatCurrency(currentLedgerAccount.closingBalance)}
+                  </p>
+                  <p className="mt-1 text-[12px] text-[#86868B]">
+                    Cuenta {currentLedgerAccount.accountCode} · {currentLedgerAccount.movements.length} movimientos
+                  </p>
+                </div>
+              </div>
+
+              {/* Movements Table */}
+              <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-black/[0.03] overflow-hidden">
+                <div className="px-5 py-4 border-b border-black/[0.05] flex items-center justify-between">
+                  <div>
+                    <h3 className="text-[15px] font-semibold text-[#1D1D1F]">
+                      Extracto Cronológico · {currentLedgerAccount.accountCode} - {currentLedgerAccount.accountName}
+                    </h3>
+                    <p className="text-[12px] text-[#6E6E73] mt-0.5">
+                      Mostrando {filteredLedgerMovements.length} de {currentLedgerAccount.movements.length} movimientos
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-[13px]">
+                    <thead>
+                      <tr className="bg-black/[0.02] border-b border-black/[0.05] text-[11px] font-semibold text-[#6E6E73] uppercase tracking-wider">
+                        <th className="py-3 px-4 w-28">Fecha</th>
+                        <th className="py-3 px-3 w-24">Asiento</th>
+                        <th className="py-3 px-3 w-32">Documento</th>
+                        <th className="py-3 px-4">Concepto</th>
+                        <th className="py-3 px-4 text-right w-28">Debe</th>
+                        <th className="py-3 px-4 text-right w-28">Haber</th>
+                        <th className="py-3 px-4 text-right w-32">Saldo Acumulado</th>
+                        <th className="py-3 px-3 text-center w-16">D/H</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black/[0.03]">
+                      {filteredLedgerMovements.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-12 text-center text-[#86868B]">
+                            No hay movimientos que coincidan con la búsqueda.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredLedgerMovements.map((m) => (
+                          <tr key={m.id} className="hover:bg-black/[0.01] transition-colors">
+                            <td className="py-2.5 px-4 tabular-nums text-[#6E6E73] whitespace-nowrap">
+                              {formatDateES(m.date)}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[12px] font-medium text-[#0071E3] whitespace-nowrap">
+                              #{m.entryNumber}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-[12px] text-[#1D1D1F] whitespace-nowrap">
+                              {m.documentNumber || '—'}
+                            </td>
+                            <td className="py-2.5 px-4 text-[#1D1D1F] max-w-md truncate">
+                              {m.concept}
+                            </td>
+                            <td className="py-2.5 px-4 text-right tabular-nums font-medium text-[#1D1D1F] whitespace-nowrap">
+                              {m.debe > 0 ? formatCurrency(m.debe) : '—'}
+                            </td>
+                            <td className="py-2.5 px-4 text-right tabular-nums font-medium text-[#1D1D1F] whitespace-nowrap">
+                              {m.haber > 0 ? formatCurrency(m.haber) : '—'}
+                            </td>
+                            <td className="py-2.5 px-4 text-right tabular-nums font-semibold text-[#1D1D1F] whitespace-nowrap">
+                              {formatCurrency(m.runningBalance)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center justify-center rounded-md px-1.5 py-0.5 font-mono text-[11px] font-bold ${
+                                  m.balanceType === 'D'
+                                    ? 'bg-[#EBF5FF] text-[#0071E3]'
+                                    : m.balanceType === 'H'
+                                    ? 'bg-[#FFF8E6] text-[#B25E00]'
+                                    : 'bg-black/[0.04] text-[#86868B]'
+                                }`}
+                              >
+                                {m.balanceType}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-black/[0.025] border-t border-black/[0.08] font-semibold text-[#1D1D1F]">
+                        <td colSpan={4} className="py-3 px-4 text-[13px]">
+                          Totales acumulados de la cuenta {currentLedgerAccount.accountCode}
+                        </td>
+                        <td className="py-3 px-4 text-right tabular-nums">
+                          {formatCurrency(currentLedgerAccount.totalDebit)}
+                        </td>
+                        <td className="py-3 px-4 text-right tabular-nums">
+                          {formatCurrency(currentLedgerAccount.totalCredit)}
+                        </td>
+                        <td className="py-3 px-4 text-right tabular-nums text-[#0071E3]">
+                          {formatCurrency(currentLedgerAccount.closingBalance)}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono text-[12px] font-bold text-[#0071E3]">
+                          {currentLedgerAccount.closingBalanceType}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Subview 5: Libro Diario */}
       {subView === 'diario' && (
         <div className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

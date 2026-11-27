@@ -1,5 +1,6 @@
 import type {
   ActivityFilter,
+  Contact,
   IssuedInvoice,
   ReceivedInvoice,
 } from '../types';
@@ -33,6 +34,10 @@ export const PGC_ACCOUNT_NAMES: Record<string, string> = {
 
 export function getPgcAccountName(code: string): string {
   if (PGC_ACCOUNT_NAMES[code]) return PGC_ACCOUNT_NAMES[code];
+  if (code.startsWith('430') || code.startsWith('43')) return `Clientes (${code})`;
+  if (code.startsWith('410') || code.startsWith('400') || code.startsWith('41') || code.startsWith('40')) {
+    return `Proveedores / Acreedores (${code})`;
+  }
   if (code.startsWith('6')) return `Gastos (${code})`;
   if (code.startsWith('7')) return `Ingresos (${code})`;
   if (code.startsWith('4')) return `Cuentas a cobrar / pagar (${code})`;
@@ -133,6 +138,44 @@ export interface GenerateAccountingParams {
   year?: number;
   period?: 'ALL' | '1T' | '2T' | '3T' | '4T';
   activityFilter?: ActivityFilter;
+  clients?: Contact[];
+  suppliers?: Contact[];
+}
+
+export interface PgcLedgerMovement {
+  id: string;
+  entryNumber: number;
+  date: string;
+  concept: string;
+  documentNumber: string;
+  sourceType: 'emitida' | 'cobro' | 'recibida' | 'pago';
+  debe: number;
+  haber: number;
+  runningBalance: number;
+  balanceType: 'D' | 'H' | 'C';
+  signedBalance: number;
+}
+
+export interface PgcLedgerAccount {
+  accountCode: string;
+  accountName: string;
+  movements: PgcLedgerMovement[];
+  totalDebit: number;
+  totalCredit: number;
+  closingBalance: number;
+  closingBalanceType: 'D' | 'H' | 'C';
+}
+
+export interface PgcGeneralLedger {
+  accounts: PgcLedgerAccount[];
+  accountMap: Record<string, PgcLedgerAccount>;
+  totalDebitAll: number;
+  totalCreditAll: number;
+}
+
+export interface GenerateLedgerOptions {
+  accountCode?: string;
+  search?: string;
 }
 
 /**
@@ -143,7 +186,9 @@ export interface GenerateAccountingParams {
 export function generatePgcJournalEntries(
   issuedInvoices: IssuedInvoice[],
   receivedInvoices: ReceivedInvoice[],
-  activityFilter: ActivityFilter = 'Todas las actividades'
+  activityFilter: ActivityFilter = 'Todas las actividades',
+  clients?: Contact[],
+  suppliers?: Contact[]
 ): PgcJournalEntry[] {
   const rawEntries: Omit<PgcJournalEntry, 'entryNumber'>[] = [];
 
@@ -163,13 +208,28 @@ export function generatePgcJournalEntries(
     const irpfTotal = inv.irpfTotal != null ? Number(inv.irpfTotal) : 0;
     const totalAmount = inv.totalAmount != null ? Number(inv.totalAmount) : 0;
 
+    let clientAccountCode = '430';
+    let clientAccountName = getPgcAccountName('430');
+    if (clients && clients.length > 0) {
+      const matchedClient = clients.find(
+        (c) =>
+          (inv.clientId && c.id === inv.clientId) ||
+          (inv.clientNif && c.nif && c.nif.trim().toUpperCase() === inv.clientNif.trim().toUpperCase()) ||
+          (inv.clientName && c.name.trim().toLowerCase() === inv.clientName.trim().toLowerCase())
+      );
+      if (matchedClient?.accountCode) {
+        clientAccountCode = matchedClient.accountCode.trim();
+        clientAccountName = `${clientAccountCode} - ${inv.clientName || matchedClient.name}`;
+      }
+    }
+
     const lines: PgcJournalLine[] = [];
 
     if (totalAmount >= 0) {
       // Normal positive invoice
       lines.push({
-        accountCode: '430',
-        accountName: getPgcAccountName('430'),
+        accountCode: clientAccountCode,
+        accountName: clientAccountName,
         debe: round2(totalAmount),
         haber: 0,
       });
@@ -225,8 +285,8 @@ export function generatePgcJournalEntries(
       }
 
       lines.push({
-        accountCode: '430',
-        accountName: getPgcAccountName('430'),
+        accountCode: clientAccountCode,
+        accountName: clientAccountName,
         debe: 0,
         haber: absTotal,
       });
@@ -272,16 +332,16 @@ export function generatePgcJournalEntries(
               haber: 0,
             },
             {
-              accountCode: '430',
-              accountName: getPgcAccountName('430'),
+              accountCode: clientAccountCode,
+              accountName: clientAccountName,
               debe: 0,
               haber: amount,
             },
           ]
         : [
             {
-              accountCode: '430',
-              accountName: getPgcAccountName('430'),
+              accountCode: clientAccountCode,
+              accountName: clientAccountName,
               debe: amount,
               haber: 0,
             },
@@ -333,6 +393,21 @@ export function generatePgcJournalEntries(
     const irpfAmount = round2((base * irpfRate) / 100);
     const totalPayable = round2(base + rawVat - irpfAmount);
 
+    let supplierAccountCode = '410';
+    let supplierAccountName = getPgcAccountName('410');
+    if (suppliers && suppliers.length > 0) {
+      const matchedSupplier = suppliers.find(
+        (s) =>
+          (exp.supplierId && s.id === exp.supplierId) ||
+          (exp.supplierNif && s.nif && s.nif.trim().toUpperCase() === exp.supplierNif.trim().toUpperCase()) ||
+          (exp.supplierName && s.name.trim().toLowerCase() === exp.supplierName.trim().toLowerCase())
+      );
+      if (matchedSupplier?.accountCode) {
+        supplierAccountCode = matchedSupplier.accountCode.trim();
+        supplierAccountName = `${supplierAccountCode} - ${exp.supplierName || matchedSupplier.name}`;
+      }
+    }
+
     const expenseCategory = exp.pgcAccountCode || '629';
     const lines: PgcJournalLine[] = [];
 
@@ -353,8 +428,8 @@ export function generatePgcJournalEntries(
     }
 
     lines.push({
-      accountCode: '410',
-      accountName: getPgcAccountName('410'),
+      accountCode: supplierAccountCode,
+      accountName: supplierAccountName,
       debe: 0,
       haber: totalPayable,
     });
@@ -390,8 +465,8 @@ export function generatePgcJournalEntries(
       const paymentDate = exp.paidAt ? exp.paidAt.slice(0, 10) : fiscalDate;
       const pagoLines: PgcJournalLine[] = [
         {
-          accountCode: '410',
-          accountName: getPgcAccountName('410'),
+          accountCode: supplierAccountCode,
+          accountName: supplierAccountName,
           debe: totalPayable,
           haber: 0,
         },
@@ -442,6 +517,8 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     year = 2026,
     period = 'ALL',
     activityFilter = 'Todas las actividades',
+    clients,
+    suppliers,
   } = params;
 
   // Filter input invoices by period before building snapshot
@@ -477,7 +554,13 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     return true;
   });
 
-  const journalEntries = generatePgcJournalEntries(filteredIssued, filteredReceived, activityFilter);
+  const journalEntries = generatePgcJournalEntries(
+    filteredIssued,
+    filteredReceived,
+    activityFilter,
+    clients,
+    suppliers
+  );
 
   // 1. Build Trial Balance (Sumas y Saldos)
   const accountMap = new Map<string, { sumDebit: number; sumCredit: number }>();
@@ -548,8 +631,31 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
   };
 
   // 3. Build Balance Sheet (Balance de Situación)
-  // Assets (Activo Corriente)
-  const clientAcc = trialRows.find((r) => r.accountCode === '430');
+  // Group client and supplier subaccounts
+  const clientRows = trialRows.filter(
+    (r) =>
+      (r.accountCode === '430' ||
+        r.accountCode.startsWith('430') ||
+        r.accountCode.startsWith('43')) &&
+      r.accountCode !== '438'
+  );
+  const provRows = trialRows.filter(
+    (r) =>
+      (r.accountCode === '410' ||
+        r.accountCode === '400' ||
+        r.accountCode.startsWith('410') ||
+        r.accountCode.startsWith('400') ||
+        r.accountCode.startsWith('41') ||
+        r.accountCode.startsWith('40')) &&
+      r.accountCode !== '407'
+  );
+
+  const totalClientDebit = round2(clientRows.reduce((s, r) => s + r.debitBalance, 0));
+  const totalClientCredit = round2(clientRows.reduce((s, r) => s + r.creditBalance, 0));
+
+  const totalProvCredit = round2(provRows.reduce((s, r) => s + r.creditBalance, 0));
+  const totalProvDebit = round2(provRows.reduce((s, r) => s + r.debitBalance, 0));
+
   const hpRetAcc = trialRows.find((r) => r.accountCode === '473');
   const bankAcc = trialRows.find((r) => r.accountCode === '572');
   const vatSopAcc = trialRows.find((r) => r.accountCode === '472');
@@ -561,12 +667,19 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
 
   const activoCorriente: PgcBalanceSheetItem[] = [];
 
-  const clientBalance = clientAcc?.debitBalance || 0;
-  if (clientBalance > 0 || trialRows.length === 0) {
+  if (totalClientDebit > 0 || trialRows.length === 0) {
     activoCorriente.push({
       code: '430',
-      label: getPgcAccountName('430'),
-      amount: clientBalance,
+      label: 'Clientes por ventas y prestaciones de servicios',
+      amount: totalClientDebit,
+    });
+  }
+
+  if (totalProvDebit > 0) {
+    activoCorriente.push({
+      code: '407',
+      label: 'Anticipos a proveedores',
+      amount: totalProvDebit,
     });
   }
 
@@ -587,12 +700,15 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     });
   }
 
-  const bankBalance = bankAcc?.debitBalance || 0;
-  activoCorriente.push({
-    code: '572',
-    label: getPgcAccountName('572'),
-    amount: bankBalance,
-  });
+  const bankDebit = bankAcc?.debitBalance || 0;
+  const bankCredit = bankAcc?.creditBalance || 0;
+  if (bankCredit <= 0 || bankDebit > 0 || trialRows.length === 0) {
+    activoCorriente.push({
+      code: '572',
+      label: getPgcAccountName('572'),
+      amount: bankDebit,
+    });
+  }
 
   const totalActivoCorriente = round2(activoCorriente.reduce((s, i) => s + i.amount, 0));
   const totalActivo = totalActivoCorriente;
@@ -608,16 +724,30 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
   const totalPatrimonioNeto = netOperatingProfit;
 
   // Liabilities (Pasivo Corriente)
-  const provAcc = trialRows.find((r) => r.accountCode === '410');
   const retPractAcc = trialRows.find((r) => r.accountCode === '4751');
 
   const pasivoCorriente: PgcBalanceSheetItem[] = [];
-  const provBalance = provAcc?.creditBalance || 0;
-  if (provBalance > 0 || trialRows.length === 0) {
+  if (totalProvCredit > 0 || trialRows.length === 0) {
     pasivoCorriente.push({
       code: '410',
-      label: getPgcAccountName('410'),
-      amount: provBalance,
+      label: 'Acreedores por prestaciones de servicios',
+      amount: totalProvCredit,
+    });
+  }
+
+  if (totalClientCredit > 0) {
+    pasivoCorriente.push({
+      code: '438',
+      label: 'Anticipos de clientes',
+      amount: totalClientCredit,
+    });
+  }
+
+  if (bankCredit > 0) {
+    pasivoCorriente.push({
+      code: '5201',
+      label: 'Deudas a corto plazo con entidades de crédito',
+      amount: bankCredit,
     });
   }
 
@@ -666,12 +796,12 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
 
   const periodoMedioCobroDias =
     operatingRevenue > 0
-      ? round2((clientBalance / (operatingRevenue * 1.21)) * 365)
+      ? round2((totalClientDebit / (operatingRevenue * 1.21)) * 365)
       : 0;
 
   const periodoMedioPagoDias =
     operatingExpenses > 0
-      ? round2((provBalance / (operatingExpenses * 1.21)) * 365)
+      ? round2((totalProvCredit / (operatingExpenses * 1.21)) * 365)
       : 0;
 
   const financialRatios: PgcFinancialRatios = {
@@ -754,3 +884,213 @@ export function downloadJournalCsv(
   URL.revokeObjectURL(url);
   return true;
 }
+
+/**
+ * Generates the General Ledger (Libro Mayor) from a PGC snapshot or journal entries.
+ * Calculates line-by-line chronological running balances and closing balances per account.
+ */
+export function generateGeneralLedger(
+  snapshotOrEntries: PgcAccountingSnapshot | PgcJournalEntry[],
+  options?: GenerateLedgerOptions
+): PgcGeneralLedger {
+  const entries: PgcJournalEntry[] = Array.isArray(snapshotOrEntries)
+    ? snapshotOrEntries
+    : snapshotOrEntries.journalEntries;
+
+  // Group lines by accountCode
+  const accountLinesMap = new Map<
+    string,
+    { accountName: string; lines: Array<{ entry: PgcJournalEntry; line: PgcJournalLine; index: number }> }
+  >();
+
+  for (const entry of entries) {
+    entry.lines.forEach((line, index) => {
+      if (!accountLinesMap.has(line.accountCode)) {
+        accountLinesMap.set(line.accountCode, { accountName: line.accountName, lines: [] });
+      }
+      accountLinesMap.get(line.accountCode)!.lines.push({ entry, line, index });
+    });
+  }
+
+  const allAccounts: PgcLedgerAccount[] = [];
+  const accountMap: Record<string, PgcLedgerAccount> = {};
+  let totalDebitAll = 0;
+  let totalCreditAll = 0;
+
+  const sortedAccountCodes = Array.from(accountLinesMap.keys()).sort();
+
+  for (const code of sortedAccountCodes) {
+    const info = accountLinesMap.get(code)!;
+    // Sort chronologically ascending by date, then entryNumber, then line index
+    const sortedLines = [...info.lines].sort((a, b) => {
+      const dateCmp = a.entry.date.localeCompare(b.entry.date);
+      if (dateCmp !== 0) return dateCmp;
+      const numCmp = a.entry.entryNumber - b.entry.entryNumber;
+      if (numCmp !== 0) return numCmp;
+      return a.index - b.index;
+    });
+
+    let runningSigned = 0;
+    let accountTotalDebit = 0;
+    let accountTotalCredit = 0;
+    const movements: PgcLedgerMovement[] = [];
+
+    for (let i = 0; i < sortedLines.length; i++) {
+      const { entry, line, index } = sortedLines[i];
+      accountTotalDebit = round2(accountTotalDebit + line.debe);
+      accountTotalCredit = round2(accountTotalCredit + line.haber);
+      runningSigned = round2(runningSigned + line.debe - line.haber);
+
+      const runningBalance = Math.abs(runningSigned);
+      const balanceType: 'D' | 'H' | 'C' =
+        runningSigned > 0.005 ? 'D' : runningSigned < -0.005 ? 'H' : 'C';
+
+      movements.push({
+        id: `m-${entry.id}-${code}-${index}-${i}`,
+        entryNumber: entry.entryNumber,
+        date: entry.date,
+        concept: entry.concept,
+        documentNumber: entry.documentNumber,
+        sourceType: entry.sourceType,
+        debe: line.debe,
+        haber: line.haber,
+        runningBalance,
+        balanceType,
+        signedBalance: runningSigned,
+      });
+    }
+
+    const netClosing = round2(accountTotalDebit - accountTotalCredit);
+    const closingBalance = Math.abs(netClosing);
+    const closingBalanceType: 'D' | 'H' | 'C' =
+      netClosing > 0.005 ? 'D' : netClosing < -0.005 ? 'H' : 'C';
+
+    totalDebitAll = round2(totalDebitAll + accountTotalDebit);
+    totalCreditAll = round2(totalCreditAll + accountTotalCredit);
+
+    const accountObj: PgcLedgerAccount = {
+      accountCode: code,
+      accountName: info.accountName,
+      movements,
+      totalDebit: accountTotalDebit,
+      totalCredit: accountTotalCredit,
+      closingBalance,
+      closingBalanceType,
+    };
+
+    allAccounts.push(accountObj);
+    accountMap[code] = accountObj;
+  }
+
+  // Apply optional filtering
+  let filteredAccounts = allAccounts;
+  if (options?.accountCode) {
+    const target = options.accountCode.trim().toLowerCase();
+    filteredAccounts = filteredAccounts.filter(
+      (a) => a.accountCode.toLowerCase() === target || a.accountCode.toLowerCase().startsWith(target)
+    );
+  }
+
+  if (options?.search) {
+    const q = options.search.trim().toLowerCase();
+    filteredAccounts = filteredAccounts.filter(
+      (a) =>
+        a.accountCode.toLowerCase().includes(q) ||
+        a.accountName.toLowerCase().includes(q) ||
+        a.movements.some(
+          (m) =>
+            m.concept.toLowerCase().includes(q) ||
+            m.documentNumber.toLowerCase().includes(q)
+        )
+    );
+  }
+
+  return {
+    accounts: filteredAccounts,
+    accountMap,
+    totalDebitAll,
+    totalCreditAll,
+  };
+}
+
+/**
+ * Generates an official UTF-8 BOM CSV export of the General Ledger (Libro Mayor).
+ */
+export function exportGeneralLedgerCsv(
+  ledger: PgcGeneralLedger,
+  selectedAccountCode?: string
+): string {
+  const headers = [
+    'Cuenta',
+    'Descripcion_Cuenta',
+    'Fecha',
+    'Asiento',
+    'Documento',
+    'Concepto',
+    'Debe',
+    'Haber',
+    'Saldo',
+    'D_H',
+  ];
+
+  const rows: string[] = [];
+  const targetAccounts = selectedAccountCode
+    ? ledger.accounts.filter(
+        (a) =>
+          a.accountCode === selectedAccountCode ||
+          a.accountCode.startsWith(selectedAccountCode)
+      )
+    : ledger.accounts;
+
+  for (const account of targetAccounts) {
+    for (const m of account.movements) {
+      rows.push(
+        [
+          escapeCsvCell(account.accountCode),
+          escapeCsvCell(account.accountName),
+          escapeCsvCell(formatAeatDate(m.date)),
+          escapeCsvCell(String(m.entryNumber)),
+          escapeCsvCell(m.documentNumber),
+          escapeCsvCell(m.concept),
+          formatAeatAmount(m.debe),
+          formatAeatAmount(m.haber),
+          formatAeatAmount(m.runningBalance),
+          escapeCsvCell(m.balanceType),
+        ].join(';')
+      );
+    }
+  }
+
+  return '\uFEFF' + [headers.join(';'), ...rows].join('\r\n');
+}
+
+/**
+ * Triggers downloading the General Ledger CSV file in browser environment.
+ */
+export function downloadGeneralLedgerCsv(
+  ledger: PgcGeneralLedger,
+  selectedAccountCode?: string,
+  fileName?: string
+): boolean {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return false;
+  }
+  const finalFileName =
+    fileName ||
+    (selectedAccountCode
+      ? `Libro_Mayor_Cuenta_${selectedAccountCode}.csv`
+      : 'Libro_Mayor_PGC.csv');
+  const csvContent = exportGeneralLedgerCsv(ledger, selectedAccountCode);
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', finalFileName);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return true;
+}
+

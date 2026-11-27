@@ -4,8 +4,10 @@ import {
   generatePgcJournalEntries,
   generateAccountingSnapshot,
   exportJournalCsv,
+  generateGeneralLedger,
+  exportGeneralLedgerCsv,
 } from './pgcAccounting';
-import type { IssuedInvoice, ReceivedInvoice } from '../types';
+import type { Contact, IssuedInvoice, ReceivedInvoice } from '../types';
 
 test('generatePgcJournalEntries ensures Debe === Haber in every entry without exception', () => {
   const issued: IssuedInvoice[] = [
@@ -381,3 +383,356 @@ test('exportJournalCsv outputs valid UTF-8 BOM with semicolon separator and DD/M
   assert.ok(csv.includes('Asiento;Fecha;Cuenta;Descripcion_Cuenta;Concepto;Documento;Debe;Haber'));
   assert.ok(csv.includes('15/05/2026;430;Clientes;Emisión Factura FAC-001;FAC-001;1210,00;0,00'));
 });
+
+test('subaccount assignment uses contact account_code in journal entries for emission, cobro, gasto and pago', () => {
+  const clients: Contact[] = [
+    {
+      id: 'client-1',
+      name: 'CASA 2A-ODED COHEN',
+      nif: 'Y1234567X',
+      accountCode: '4300002',
+      email: 'oded@example.com',
+      address: 'Calle Mayor 1',
+      activity: 'General',
+      defaultIva: 21,
+      defaultIrpf: 0,
+      status: 'Activo',
+      kind: 'cliente',
+    },
+  ];
+
+  const suppliers: Contact[] = [
+    {
+      id: 'sup-1',
+      name: 'PROVEEDOR SL',
+      nif: 'B99887766',
+      accountCode: '4100010',
+      email: 'prov@example.com',
+      address: 'Poligono Industrial 4',
+      activity: 'General',
+      defaultIva: 21,
+      defaultIrpf: 0,
+      status: 'Activo',
+      kind: 'proveedor',
+    },
+  ];
+
+  const issued: IssuedInvoice[] = [
+    {
+      id: 'inv-oded',
+      number: 'FAC-100',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'client-1',
+      clientName: 'CASA 2A-ODED COHEN',
+      clientNif: 'Y1234567X',
+      activity: 'General',
+      issueDate: '2026-03-01',
+      dueDate: '',
+      lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
+      taxBase: 1000,
+      vatTotal: 210,
+      totalAmount: 1210,
+      status: 'Cobrada',
+      veriFactuLocked: true,
+    },
+  ];
+
+  const received: ReceivedInvoice[] = [
+    {
+      id: 'exp-prov',
+      number: 'EXP-100',
+      supplierId: 'sup-1',
+      supplierName: 'PROVEEDOR SL',
+      supplierNif: 'B99887766',
+      activity: 'General',
+      issueDate: '2026-03-05',
+      accountingDate: '2026-03-05',
+      concept: 'Servicios de asesoría',
+      pgcAccountCode: '623',
+      baseAmount: 500,
+      ivaRate: 21,
+      paymentStatus: 'paid',
+      deductible: true,
+      deductibleVatPct: 100,
+      deductibleExpensePct: 100,
+      status: 'Contabilizada',
+    },
+  ];
+
+  const entries = generatePgcJournalEntries(issued, received, 'Todas las actividades', clients, suppliers);
+
+  // Check emission entry
+  const emissionEntry = entries.find((e) => e.id === 'entry-inv-inv-oded');
+  assert.ok(emissionEntry);
+  const clientLine = emissionEntry.lines.find((l) => l.accountCode === '4300002');
+  assert.ok(clientLine, 'Should use 4300002 instead of 430');
+  assert.equal(clientLine.accountName, '4300002 - CASA 2A-ODED COHEN');
+  assert.equal(clientLine.debe, 1210);
+
+  // Check cobro entry
+  const cobroEntry = entries.find((e) => e.id === 'entry-pay-inv-oded');
+  assert.ok(cobroEntry);
+  const cobroClientLine = cobroEntry.lines.find((l) => l.accountCode === '4300002');
+  assert.ok(cobroClientLine, 'Cobro entry must credit 4300002');
+  assert.equal(cobroClientLine.haber, 1210);
+
+  // Check expense entry
+  const expEntry = entries.find((e) => e.id === 'entry-exp-exp-prov');
+  assert.ok(expEntry);
+  const supLine = expEntry.lines.find((l) => l.accountCode === '4100010');
+  assert.ok(supLine, 'Should use 4100010 instead of 410');
+  assert.equal(supLine.accountName, '4100010 - PROVEEDOR SL');
+
+  // Check pago entry
+  const pagoEntry = entries.find((e) => e.id === 'entry-exppay-exp-prov');
+  assert.ok(pagoEntry);
+  const pagoSupLine = pagoEntry.lines.find((l) => l.accountCode === '4100010');
+  assert.ok(pagoSupLine, 'Pago entry must debit 4100010');
+});
+
+test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps Activo === Pasivo + Patrimonio Neto', () => {
+  const clients: Contact[] = [
+    {
+      id: 'c1',
+      name: 'Cliente Alpha',
+      nif: 'A11111111',
+      accountCode: '4300001',
+      email: 'a@test.com',
+      address: '',
+      activity: 'General',
+      defaultIva: 21,
+      defaultIrpf: 0,
+      status: 'Activo',
+      kind: 'cliente',
+    },
+    {
+      id: 'c2',
+      name: 'Cliente Beta',
+      nif: 'B22222222',
+      accountCode: '4300002',
+      email: 'b@test.com',
+      address: '',
+      activity: 'General',
+      defaultIva: 21,
+      defaultIrpf: 0,
+      status: 'Activo',
+      kind: 'cliente',
+    },
+  ];
+
+  const suppliers: Contact[] = [
+    {
+      id: 's1',
+      name: 'Proveedor Gamma',
+      nif: 'G33333333',
+      accountCode: '4100005',
+      email: 'g@test.com',
+      address: '',
+      activity: 'General',
+      defaultIva: 21,
+      defaultIrpf: 0,
+      status: 'Activo',
+      kind: 'proveedor',
+    },
+  ];
+
+  const issued: IssuedInvoice[] = [
+    {
+      id: 'inv-1',
+      number: 'FAC-1',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'c1',
+      clientName: 'Cliente Alpha',
+      activity: 'General',
+      issueDate: '2026-04-10',
+      dueDate: '',
+      lines: [],
+      taxBase: 2000,
+      vatTotal: 420,
+      totalAmount: 2420,
+      status: 'Pendiente', // unpaid -> saldo deudor in 4300001
+      veriFactuLocked: true,
+    },
+    {
+      id: 'inv-2',
+      number: 'FAC-2',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'c2',
+      clientName: 'Cliente Beta',
+      activity: 'General',
+      issueDate: '2026-04-15',
+      dueDate: '',
+      lines: [],
+      taxBase: 1000,
+      vatTotal: 210,
+      totalAmount: 1210,
+      status: 'Pendiente', // unpaid -> saldo deudor in 4300002
+      veriFactuLocked: true,
+    },
+  ];
+
+  const received: ReceivedInvoice[] = [
+    {
+      id: 'exp-1',
+      number: 'EXP-1',
+      supplierId: 's1',
+      supplierName: 'Proveedor Gamma',
+      activity: 'General',
+      issueDate: '2026-04-20',
+      accountingDate: '2026-04-20',
+      concept: 'Mantenimiento',
+      pgcAccountCode: '622',
+      baseAmount: 600,
+      ivaRate: 21,
+      paymentStatus: 'pending', // unpaid -> saldo acreedor in 4100005
+      deductible: true,
+      deductibleVatPct: 100,
+      deductibleExpensePct: 100,
+      status: 'Contabilizada',
+    },
+  ];
+
+  const snapshot = generateAccountingSnapshot({
+    issuedInvoices: issued,
+    receivedInvoices: received,
+    year: 2026,
+    period: 'ALL',
+    clients,
+    suppliers,
+  });
+
+  const { balanceSheet, trialBalance } = snapshot;
+
+  assert.equal(balanceSheet.isBalanced, true, 'Balance sheet must balance strictly');
+  assert.equal(trialBalance.isBalanced, true, 'Trial balance must balance strictly');
+
+  // Total clients in Activo Corriente should be 2420 + 1210 = 3630
+  const clientAssetItem = balanceSheet.activoCorriente.find((i) => i.code === '430');
+  assert.ok(clientAssetItem);
+  assert.equal(clientAssetItem.amount, 3630);
+
+  // Total creditors in Pasivo Corriente should be 600 + 126 = 726
+  const provLiabilityItem = balanceSheet.pasivoCorriente.find((i) => i.code === '410');
+  assert.ok(provLiabilityItem);
+  assert.equal(provLiabilityItem.amount, 726);
+
+  assert.equal(
+    balanceSheet.totalActivo,
+    balanceSheet.totalPasivoYPatrimonio,
+    `Activo (${balanceSheet.totalActivo}) must equal Pasivo+PN (${balanceSheet.totalPasivoYPatrimonio})`
+  );
+});
+
+test('generateGeneralLedger calculates accurate chronological running balances and closing balances per account', () => {
+  const issued: IssuedInvoice[] = [
+    {
+      id: 'inv-1',
+      number: 'FAC-1',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'c1',
+      clientName: 'Cliente 1',
+      activity: 'General',
+      issueDate: '2026-01-10',
+      dueDate: '',
+      lines: [],
+      taxBase: 1000,
+      vatTotal: 210,
+      totalAmount: 1210,
+      status: 'Cobrada', // Emission on 2026-01-10, cobro on 2026-01-10
+      veriFactuLocked: true,
+    },
+    {
+      id: 'inv-2',
+      number: 'FAC-2',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'c1',
+      clientName: 'Cliente 1',
+      activity: 'General',
+      issueDate: '2026-02-15',
+      dueDate: '',
+      lines: [],
+      taxBase: 500,
+      vatTotal: 105,
+      totalAmount: 605,
+      status: 'Pendiente', // Emission only
+      veriFactuLocked: true,
+    },
+  ];
+
+  const snapshot = generateAccountingSnapshot({
+    issuedInvoices: issued,
+    receivedInvoices: [],
+    year: 2026,
+  });
+
+  const ledger = generateGeneralLedger(snapshot);
+
+  assert.ok(ledger.accounts.length > 0);
+  const clientAccount = ledger.accountMap['430'];
+  assert.ok(clientAccount, 'Account 430 should exist in General Ledger');
+
+  // Movements in 430:
+  // 1. Emission FAC-1: Debe 1210, Haber 0 -> runningBalance 1210 (D)
+  // 2. Cobro FAC-1: Debe 0, Haber 1210 -> runningBalance 0 (C)
+  // 3. Emission FAC-2: Debe 605, Haber 0 -> runningBalance 605 (D)
+  assert.equal(clientAccount.movements.length, 3);
+  assert.equal(clientAccount.movements[0].debe, 1210);
+  assert.equal(clientAccount.movements[0].runningBalance, 1210);
+  assert.equal(clientAccount.movements[0].balanceType, 'D');
+
+  assert.equal(clientAccount.movements[1].haber, 1210);
+  assert.equal(clientAccount.movements[1].runningBalance, 0);
+  assert.equal(clientAccount.movements[1].balanceType, 'C');
+
+  assert.equal(clientAccount.movements[2].debe, 605);
+  assert.equal(clientAccount.movements[2].runningBalance, 605);
+  assert.equal(clientAccount.movements[2].balanceType, 'D');
+
+  assert.equal(clientAccount.totalDebit, 1815);
+  assert.equal(clientAccount.totalCredit, 1210);
+  assert.equal(clientAccount.closingBalance, 605);
+  assert.equal(clientAccount.closingBalanceType, 'D');
+});
+
+test('exportGeneralLedgerCsv outputs official UTF-8 BOM CSV with semicolons and comma decimals', () => {
+  const issued: IssuedInvoice[] = [
+    {
+      id: 'inv-csv',
+      number: 'FAC-CSV',
+      series: 'FAC',
+      documentType: 'normal',
+      clientId: 'c1',
+      clientName: 'Cliente CSV',
+      activity: 'General',
+      issueDate: '2026-05-20',
+      dueDate: '',
+      lines: [],
+      taxBase: 100,
+      vatTotal: 21,
+      totalAmount: 121,
+      status: 'Pendiente',
+      veriFactuLocked: true,
+    },
+  ];
+
+  const snapshot = generateAccountingSnapshot({
+    issuedInvoices: issued,
+    receivedInvoices: [],
+    year: 2026,
+  });
+
+  const ledger = generateGeneralLedger(snapshot);
+  const csv = exportGeneralLedgerCsv(ledger, '430');
+
+  assert.equal(csv.charCodeAt(0), 0xfeff, 'Must start with UTF-8 BOM');
+  assert.ok(csv.includes('Cuenta;Descripcion_Cuenta;Fecha;Asiento;Documento;Concepto;Debe;Haber;Saldo;D_H'));
+  assert.ok(csv.includes('430;Clientes;20/05/2026;1;FAC-CSV;Emisión Factura FAC-CSV;121,00;0,00;121,00;D'));
+});
+
