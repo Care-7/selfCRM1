@@ -6,6 +6,7 @@ on:
     paths:
       - 'supabase/migrations/**'
       - 'supabase/functions/**'
+      - '.github/workflows/supabase-migrations.yml'
   workflow_dispatch:
 
 jobs:
@@ -17,8 +18,24 @@ jobs:
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
+        continue-on-error: true
         with:
           version: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure Supabase CLI availability (npx fallback)
+        run: |
+          if ! command -v supabase &> /dev/null; then
+            echo "Supabase CLI binary not found in PATH. Configuring npx fallback wrapper..."
+            mkdir -p "$HOME/.local/bin"
+            printf '#!/usr/bin/env bash\nexec npx --yes supabase "$@"\n' > "$HOME/.local/bin/supabase"
+            chmod +x "$HOME/.local/bin/supabase"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Verify Supabase CLI
+        run: supabase --version
 
       - name: Link Supabase project
         env:
