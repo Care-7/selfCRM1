@@ -24,7 +24,7 @@ export function isValidUuid(str?: string | null): boolean {
  */
 export function mapDatabaseError(
   error: unknown,
-  entity: 'cliente' | 'proveedor' | 'factura' | 'gasto' | 'registro' = 'registro'
+  entity: 'cliente' | 'proveedor' | 'factura' | 'gasto' | 'registro' | 'asiento contable' = 'registro'
 ): string {
   if (!error) return 'Error desconocido al procesar la operación.';
 

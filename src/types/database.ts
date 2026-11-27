@@ -235,6 +235,17 @@ export interface Database {
         Update: Partial<ReceivedInvoiceRow>;
         Relationships: [];
       };
+      manual_journal_entries: {
+        Row: ManualJournalEntryRow;
+        Insert: Partial<ManualJournalEntryRow> & {
+          organization_id: string;
+          entry_date: string;
+          concept: string;
+          lines: Json;
+        };
+        Update: Partial<ManualJournalEntryRow>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -387,6 +398,7 @@ export interface ReceivedInvoiceRow {
   attachment_path: string | null;
   attachment_name: string | null;
   notes: string | null;
+  is_migrated?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -421,8 +433,47 @@ export interface CreateReceivedInvoiceInput {
   attachment_path?: string | null;
   attachment_name?: string | null;
   notes?: string | null;
+  is_migrated?: boolean;
 }
 
 export type UpdateReceivedInvoiceInput = Partial<Omit<CreateReceivedInvoiceInput, 'organization_id'>>;
+
+export interface ManualJournalLineDb {
+  accountCode: string;
+  accountName: string;
+  debit: number;
+  credit: number;
+  concept?: string;
+  account_code?: string;
+  account_name?: string;
+  debe?: number;
+  haber?: number;
+}
+
+export interface ManualJournalEntryRow {
+  id: string;
+  organization_id: string;
+  activity_id: string | null;
+  entry_date: string;
+  document_number: string | null;
+  concept: string;
+  source: 'manual' | 'imported';
+  lines: ManualJournalLineDb[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateManualJournalEntryInput {
+  organization_id: string;
+  activity_id?: string | null;
+  entry_number?: string | null;
+  entry_date: string;
+  document_number?: string | null;
+  concept: string;
+  source?: 'manual' | 'imported';
+  source_type?: 'manual' | 'imported';
+  lines: ManualJournalLineDb[];
+}
+
 
 

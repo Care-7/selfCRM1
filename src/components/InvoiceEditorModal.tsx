@@ -14,7 +14,9 @@ import {
   Download,
   Copy,
   Search,
+  AlertTriangle,
 } from 'lucide-react';
+import { findDuplicateIssuedInvoice, type DuplicateInvoiceResult } from '../utils/duplicateDetector';
 import { downloadInvoicePdf } from '../services/invoicePdfService';
 import type {
   ActivityType,
@@ -101,6 +103,10 @@ export function InvoiceEditorModal({
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    result: DuplicateInvoiceResult;
+    pendingEmit: boolean;
+  } | null>(null);
 
   // Quick inline client creation states
   const [showInlineNewClient, setShowInlineNewClient] = useState(false);
@@ -113,6 +119,7 @@ export function InvoiceEditorModal({
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg('');
+    setDuplicateWarning(null);
     setIsSubmitting(false);
     setShowInlineNewClient(false);
     setClientSearch('');
@@ -310,12 +317,13 @@ export function InvoiceEditorModal({
     };
   };
 
-  const handleSaveDraft = async () => {
-    const built = validateAndBuild(false);
+  const doSaveInvoice = async (shouldEmit: boolean) => {
+    const built = validateAndBuild(shouldEmit);
     if (!built) return;
     try {
       setIsSubmitting(true);
       setErrorMsg('');
+      setDuplicateWarning(null);
       await onSaveInvoice(built, isNew, rectifiedInvoiceId, rectificationReason);
       onClose();
     } catch (err: any) {
@@ -325,19 +333,44 @@ export function InvoiceEditorModal({
     }
   };
 
+  const handleSaveDraft = async () => {
+    const built = validateAndBuild(false);
+    if (!built) return;
+    if (!duplicateWarning) {
+      const dup = findDuplicateIssuedInvoice({
+        invoiceNumber: built.number,
+        clientName: built.clientName,
+        issueDate: built.issueDate,
+        total: built.totalAmount || totals.total,
+        existingInvoices: allIssuedInvoices,
+        currentInvoiceId: invoice?.id,
+      });
+      if (dup) {
+        setDuplicateWarning({ result: dup, pendingEmit: false });
+        return;
+      }
+    }
+    await doSaveInvoice(false);
+  };
+
   const handleEmitVeriFactu = async () => {
     const built = validateAndBuild(true);
     if (!built) return;
-    try {
-      setIsSubmitting(true);
-      setErrorMsg('');
-      await onSaveInvoice(built, isNew, rectifiedInvoiceId, rectificationReason);
-      onClose();
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Error al emitir la factura en VeriFactu.');
-    } finally {
-      setIsSubmitting(false);
+    if (!duplicateWarning) {
+      const dup = findDuplicateIssuedInvoice({
+        invoiceNumber: built.number,
+        clientName: built.clientName,
+        issueDate: built.issueDate,
+        total: built.totalAmount || totals.total,
+        existingInvoices: allIssuedInvoices,
+        currentInvoiceId: invoice?.id,
+      });
+      if (dup) {
+        setDuplicateWarning({ result: dup, pendingEmit: true });
+        return;
+      }
     }
+    await doSaveInvoice(true);
   };
 
   const handleDownloadPdf = async () => {
@@ -576,6 +609,46 @@ export function InvoiceEditorModal({
                 <p className="leading-relaxed">
                   Esta factura está <strong>emitida y bloqueada conforme a VeriFactu</strong>. Sus datos fiscales no pueden alterarse; puedes registrar su cobro o emitir una factura rectificativa si fuera necesario.
                 </p>
+              </div>
+            )}
+
+            {duplicateWarning && (
+              <div
+                role="alert"
+                className="rounded-xl bg-[#FFF8E6] p-4 text-[13px] border border-[#FFE0B2] space-y-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-[#B25E00] mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-[#8A4800]">Aviso de posible factura duplicada</p>
+                    <p className="mt-1 text-[#8A4800] leading-relaxed">
+                      {duplicateWarning.result.reason}. Ya existe la factura{' '}
+                      <strong>{duplicateWarning.result.duplicateInvoice.number}</strong> (
+                      {duplicateWarning.result.duplicateInvoice.clientName}) de fecha{' '}
+                      {formatDateES(duplicateWarning.result.duplicateInvoice.issueDate)}.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setDuplicateWarning(null)}
+                    className="rounded-lg bg-white border border-black/[0.1] px-3 py-1.5 text-[12px] font-medium text-[#1D1D1F] hover:bg-black/[0.04]"
+                  >
+                    Cancelar y revisar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const emit = duplicateWarning.pendingEmit;
+                      setDuplicateWarning(null);
+                      await doSaveInvoice(emit);
+                    }}
+                    className="rounded-lg bg-[#B25E00] px-3 py-1.5 text-[12px] font-medium text-white hover:bg-[#8A4800]"
+                  >
+                    Guardar de todas formas
+                  </button>
+                </div>
               </div>
             )}
 

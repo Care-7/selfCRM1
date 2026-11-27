@@ -2,21 +2,47 @@ import type {
   ActivityFilter,
   Contact,
   IssuedInvoice,
+  ManualJournalEntry,
   ReceivedInvoice,
 } from '../types';
 import { round2 } from './finance';
 import { getQuarterFromIsoDate, formatAeatDate, formatAeatAmount, escapeCsvCell } from '../services/aeatBooksExportService';
 
 export const PGC_ACCOUNT_NAMES: Record<string, string> = {
+  '100': 'Capital social',
+  '102': 'Capital',
+  '112': 'Reserva legal',
+  '113': 'Reservas voluntarias',
+  '120': 'Remanente',
+  '121': 'Resultados negativos de ejercicios anteriores',
   '129': 'Resultado del ejercicio',
+  '170': 'Deudas a largo plazo con entidades de crédito',
+  '210': 'Terrenos y bienes naturales',
+  '211': 'Construcciones',
+  '213': 'Maquinaria',
+  '216': 'Mobiliario',
+  '217': 'Equipos para procesos de información',
+  '281': 'Amortización acumulada del inmovilizado material',
+  '300': 'Mercaderías',
+  '400': 'Proveedores',
+  '407': 'Anticipos a proveedores',
   '410': 'Acreedores por prestaciones de servicios',
   '430': 'Clientes',
+  '438': 'Anticipos de clientes',
+  '440': 'Deudores',
+  '460': 'Anticipos de remuneraciones',
+  '465': 'Remuneraciones pendientes de pago',
   '4700': 'H.P., deudora por IVA a compensar',
   '472': 'H.P., IVA soportado',
   '473': 'H.P., retenciones y pagos a cuenta',
   '4750': 'H.P., acreedora por IVA (Mod. 303)',
   '4751': 'H.P., acreedora por retenciones practicadas (Mod. 111)',
+  '476': 'Organismos de la Seguridad Social acreedores',
   '477': 'H.P., IVA repercutido',
+  '520': 'Deudas a corto plazo con entidades de crédito',
+  '5201': 'Deudas a corto plazo con entidades de crédito',
+  '551': 'Cuenta corriente con socios y administradores',
+  '570': 'Caja, euros',
   '572': 'Bancos e instituciones de crédito c/c',
   '600': 'Compras de mercaderías',
   '621': 'Arrendamientos y cánones',
@@ -57,13 +83,14 @@ export interface PgcJournalEntry {
   date: string; // YYYY-MM-DD
   concept: string;
   documentNumber: string;
-  sourceType: 'emitida' | 'cobro' | 'recibida' | 'pago';
+  sourceType: 'emitida' | 'cobro' | 'recibida' | 'pago' | 'manual' | 'imported';
   activity: string;
   activityId?: string;
   lines: PgcJournalLine[];
   totalDebe: number;
   totalHaber: number;
   isBalanced: boolean;
+  isManual?: boolean;
 }
 
 export interface PgcTrialBalanceRow {
@@ -140,6 +167,7 @@ export interface GenerateAccountingParams {
   activityFilter?: ActivityFilter;
   clients?: Contact[];
   suppliers?: Contact[];
+  manualEntries?: ManualJournalEntry[];
 }
 
 export interface PgcLedgerMovement {
@@ -148,7 +176,7 @@ export interface PgcLedgerMovement {
   date: string;
   concept: string;
   documentNumber: string;
-  sourceType: 'emitida' | 'cobro' | 'recibida' | 'pago';
+  sourceType: 'emitida' | 'cobro' | 'recibida' | 'pago' | 'manual' | 'imported';
   debe: number;
   haber: number;
   runningBalance: number;
@@ -188,7 +216,8 @@ export function generatePgcJournalEntries(
   receivedInvoices: ReceivedInvoice[],
   activityFilter: ActivityFilter = 'Todas las actividades',
   clients?: Contact[],
-  suppliers?: Contact[]
+  suppliers?: Contact[],
+  manualEntries?: ManualJournalEntry[]
 ): PgcJournalEntry[] {
   const rawEntries: Omit<PgcJournalEntry, 'entryNumber'>[] = [];
 
@@ -494,6 +523,42 @@ export function generatePgcJournalEntries(
     }
   }
 
+  // 3. Process Manual and Imported Journal Entries
+  if (manualEntries && manualEntries.length > 0) {
+    for (const me of manualEntries) {
+      if (activityFilter !== 'Todas las actividades') {
+        if (me.activity && me.activity !== activityFilter && me.activityId !== activityFilter) {
+          continue;
+        }
+      }
+
+      const lines: PgcJournalLine[] = me.lines.map((l) => ({
+        accountCode: l.accountCode.trim(),
+        accountName: l.accountName?.trim() || getPgcAccountName(l.accountCode.trim()),
+        debe: round2(Number(l.debe ?? l.debit) || 0),
+        haber: round2(Number(l.haber ?? l.credit) || 0),
+      }));
+
+      const totalDebe = round2(lines.reduce((s, l) => s + l.debe, 0));
+      const totalHaber = round2(lines.reduce((s, l) => s + l.haber, 0));
+
+      rawEntries.push({
+        id: me.id,
+        date: me.date || me.entryDate || '',
+        concept: me.concept,
+        documentNumber: me.documentNumber || '',
+        sourceType: me.source || me.sourceType || 'manual',
+        activity: me.activity || '',
+        activityId: me.activityId,
+        lines,
+        totalDebe,
+        totalHaber,
+        isBalanced: Math.abs(totalDebe - totalHaber) < 0.01,
+        isManual: true,
+      });
+    }
+  }
+
   // Sort chronologically ascending and assign entry numbers
   rawEntries.sort((a, b) => {
     const d = a.date.localeCompare(b.date);
@@ -519,6 +584,7 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     activityFilter = 'Todas las actividades',
     clients,
     suppliers,
+    manualEntries = [],
   } = params;
 
   // Filter input invoices by period before building snapshot
@@ -554,12 +620,30 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     return true;
   });
 
+  const filteredManual = (manualEntries || []).filter((me) => {
+    const entryDate = me.date || me.entryDate || '';
+    const entryYear = parseInt(entryDate.slice(0, 4), 10);
+    if (year !== undefined && entryYear !== year) return false;
+
+    if (period !== 'ALL') {
+      if (getQuarterFromIsoDate(entryDate) !== period) return false;
+    }
+
+    if (activityFilter !== 'Todas las actividades') {
+      if (me.activity && me.activity !== activityFilter && me.activityId !== activityFilter) {
+        return false;
+      }
+    }
+    return true;
+  });
+
   const journalEntries = generatePgcJournalEntries(
     filteredIssued,
     filteredReceived,
     activityFilter,
     clients,
-    suppliers
+    suppliers,
+    filteredManual
   );
 
   // 1. Build Trial Balance (Sumas y Saldos)
@@ -710,9 +794,6 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
     });
   }
 
-  const totalActivoCorriente = round2(activoCorriente.reduce((s, i) => s + i.amount, 0));
-  const totalActivo = totalActivoCorriente;
-
   // Equity (Patrimonio Neto)
   const patrimonioNeto: PgcBalanceSheetItem[] = [
     {
@@ -721,7 +802,6 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
       amount: netOperatingProfit,
     },
   ];
-  const totalPatrimonioNeto = netOperatingProfit;
 
   // Liabilities (Pasivo Corriente)
   const retPractAcc = trialRows.find((r) => r.accountCode === '4751');
@@ -767,6 +847,72 @@ export function generateAccountingSnapshot(params: GenerateAccountingParams): Pg
       amount: retPractBalance,
     });
   }
+
+  // Generalized classification for any additional accounts from manual entries
+  // (e.g. 100 Capital Social, 217 Equipos informáticos, 300 Mercaderías, 465 Remuneraciones, 520 Préstamos)
+  const isHandledCode = (code: string) => {
+    if (code.startsWith('6') || code.startsWith('7')) return true;
+    if (code === '472' || code === '477' || code === '473' || code === '4751' || code === '572' || code === '129') return true;
+    if ((code === '430' || code.startsWith('430') || code.startsWith('43')) && code !== '438') return true;
+    if ((code === '410' || code === '400' || code.startsWith('410') || code.startsWith('400') || code.startsWith('41') || code.startsWith('40')) && code !== '407') return true;
+    return false;
+  };
+
+  const otherRows = trialRows.filter((r) => !isHandledCode(r.accountCode));
+
+  for (const r of otherRows) {
+    if (r.accountCode.startsWith('1')) {
+      if (r.creditBalance > 0) {
+        patrimonioNeto.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: r.creditBalance,
+        });
+      }
+      if (r.debitBalance > 0) {
+        patrimonioNeto.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: -r.debitBalance,
+        });
+      }
+    } else if (r.accountCode.startsWith('2') || r.accountCode.startsWith('3')) {
+      if (r.debitBalance > 0) {
+        activoCorriente.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: r.debitBalance,
+        });
+      }
+      if (r.creditBalance > 0) {
+        activoCorriente.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: -r.creditBalance,
+        });
+      }
+    } else {
+      if (r.debitBalance > 0) {
+        activoCorriente.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: r.debitBalance,
+        });
+      }
+      if (r.creditBalance > 0) {
+        pasivoCorriente.push({
+          code: r.accountCode,
+          label: r.accountName,
+          amount: r.creditBalance,
+        });
+      }
+    }
+  }
+
+  const totalActivoCorriente = round2(activoCorriente.reduce((s, i) => s + i.amount, 0));
+  const totalActivo = totalActivoCorriente;
+
+  const totalPatrimonioNeto = round2(patrimonioNeto.reduce((s, i) => s + i.amount, 0));
 
   const totalPasivoCorriente = round2(pasivoCorriente.reduce((s, i) => s + i.amount, 0));
   const totalPasivoYPatrimonio = round2(totalPatrimonioNeto + totalPasivoCorriente);

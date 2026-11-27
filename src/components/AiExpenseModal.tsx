@@ -27,7 +27,7 @@ import type {
 } from '../types';
 import type { BusinessActivity } from '../types/database';
 import { OCR_SAMPLE_INVOICES, REFERENCE_DATE } from '../data/mockData';
-import { formatCurrency, round2 } from '../utils/finance';
+import { formatCurrency, formatDateES, round2 } from '../utils/finance';
 import {
   PGC_EXPENSE_ACCOUNTS,
   calculateDeductibleAmounts,
@@ -39,11 +39,16 @@ import {
   validateExtractedAmounts,
   matchSupplierByTaxId,
 } from '../services/invoiceOcrService';
+import {
+  findDuplicateReceivedInvoice,
+  type DuplicateReceivedInvoiceResult,
+} from '../utils/duplicateDetector';
 
 interface AiExpenseModalProps {
   isOpen: boolean;
   expense?: ReceivedInvoice | null;
   suppliers: Contact[];
+  allReceivedInvoices?: ReceivedInvoice[];
   activities?: BusinessActivity[];
   defaultActivity?: ActivityType;
   onClose: () => void;
@@ -57,6 +62,7 @@ export function AiExpenseModal({
   isOpen,
   expense,
   suppliers,
+  allReceivedInvoices = [],
   activities = [],
   defaultActivity = 'Actividad Principal',
   onClose,
@@ -98,6 +104,10 @@ export function AiExpenseModal({
   const [existingAttachmentName, setExistingAttachmentName] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    result: DuplicateReceivedInvoiceResult;
+    pendingInvoice: ReceivedInvoice;
+  } | null>(null);
 
   // Quick supplier search & creation
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -114,6 +124,7 @@ export function AiExpenseModal({
 
     setErrorMsg('');
     setInfoMsg('');
+    setDuplicateWarning(null);
     setAttachedFile(null);
     setIsSubmitting(false);
     setIsAnalyzing(false);
@@ -430,10 +441,31 @@ export function AiExpenseModal({
       attachmentName: attachedFile ? attachedFile.name : existingAttachmentName || undefined,
     };
 
+    if (!duplicateWarning) {
+      const dup = findDuplicateReceivedInvoice({
+        supplierNif: supplierNif.trim(),
+        supplierName: supplierName.trim(),
+        invoiceNumber: number.trim(),
+        issueDate,
+        total: totalAmount,
+        existingInvoices: allReceivedInvoices,
+        currentInvoiceId: expense?.id,
+      });
+      if (dup) {
+        setDuplicateWarning({ result: dup, pendingInvoice: built });
+        return;
+      }
+    }
+
+    await executeSaveExpense(built);
+  };
+
+  const executeSaveExpense = async (targetExpense: ReceivedInvoice) => {
     try {
       setIsSubmitting(true);
       setErrorMsg('');
-      await onSaveExpense(built, attachedFile);
+      setDuplicateWarning(null);
+      await onSaveExpense(targetExpense, attachedFile);
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Error al guardar la factura recibida.');
@@ -514,6 +546,46 @@ export function AiExpenseModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {duplicateWarning && (
+            <div
+              role="alert"
+              className="rounded-xl bg-[#FFF8E6] p-4 text-[13px] border border-[#FFE0B2] space-y-3"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-[#B25E00] mt-0.5" />
+                <div>
+                  <p className="font-semibold text-[#8A4800]">Aviso de posible factura/gasto duplicado</p>
+                  <p className="mt-1 text-[#8A4800] leading-relaxed">
+                    {duplicateWarning.result.reason}. Ya existe el gasto{' '}
+                    <strong>{duplicateWarning.result.duplicateInvoice.number}</strong> (
+                    {duplicateWarning.result.duplicateInvoice.supplierName}) de fecha{' '}
+                    {formatDateES(duplicateWarning.result.duplicateInvoice.issueDate)}.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-1 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDuplicateWarning(null)}
+                  className="rounded-lg bg-white border border-black/[0.1] px-3 py-1.5 text-[12px] font-medium text-[#1D1D1F] hover:bg-black/[0.04]"
+                >
+                  Cancelar y revisar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const inv = duplicateWarning.pendingInvoice;
+                    setDuplicateWarning(null);
+                    await executeSaveExpense(inv);
+                  }}
+                  className="rounded-lg bg-[#B25E00] px-3 py-1.5 text-[12px] font-medium text-white hover:bg-[#8A4800]"
+                >
+                  Guardar de todas formas
+                </button>
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div
               role="alert"

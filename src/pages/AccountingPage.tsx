@@ -7,8 +7,12 @@ import {
   Download,
   Search,
   TrendingUp,
+  Plus,
+  Trash2,
+  Upload,
 } from 'lucide-react';
-import type { ActivityFilter, Contact, IssuedInvoice, ReceivedInvoice } from '../types';
+import type { ActivityFilter, Contact, IssuedInvoice, ReceivedInvoice, ManualJournalEntry, ManualJournalLine } from '../types';
+import type { CreateManualJournalEntryInput } from '../types/database';
 import {
   downloadGeneralLedgerCsv,
   downloadJournalCsv,
@@ -20,6 +24,8 @@ import { formatCurrency, formatDateES } from '../utils/finance';
 import { REFERENCE_DATE } from '../data/mockData';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatusBadge } from '../components/StatusBadge';
+import { ManualJournalModal } from '../components/ManualJournalModal';
+import { HistoricalImportModal } from '../components/HistoricalImportModal';
 
 export type AccountingSubView = 'balance' | 'pyg' | 'trial' | 'mayor' | 'diario' | 'ratios';
 
@@ -29,9 +35,21 @@ interface AccountingPageProps {
   activityFilter: ActivityFilter;
   clients?: Contact[];
   suppliers?: Contact[];
+  manualEntries?: ManualJournalEntry[];
   initialSubView?: AccountingSubView;
   initialAccountFilter?: string;
   initialSearchFilter?: string;
+  onCreateManualEntry?: (entry: {
+    date: string;
+    documentNumber?: string;
+    concept: string;
+    activityId?: string;
+    lines: ManualJournalLine[];
+  }) => Promise<void>;
+  onDeleteManualEntry?: (id: string) => Promise<void>;
+  onHistoricalImportIssued?: (invoices: IssuedInvoice[]) => Promise<void>;
+  onHistoricalImportReceived?: (invoices: ReceivedInvoice[]) => Promise<void>;
+  onHistoricalImportManualEntries?: (entries: CreateManualJournalEntryInput[]) => Promise<void>;
 }
 
 const SUBVIEW_OPTIONS: { value: AccountingSubView; label: string }[] = [
@@ -57,9 +75,15 @@ export function AccountingPage({
   activityFilter,
   clients,
   suppliers,
+  manualEntries = [],
   initialSubView,
   initialAccountFilter,
   initialSearchFilter,
+  onCreateManualEntry,
+  onDeleteManualEntry,
+  onHistoricalImportIssued,
+  onHistoricalImportReceived,
+  onHistoricalImportManualEntries,
 }: AccountingPageProps) {
   // Query param check if props not provided
   const queryTab =
@@ -83,6 +107,10 @@ export function AccountingPage({
   );
   const [selectedAccountCodeState, setSelectedAccountCodeState] = useState<string>('');
 
+  // Modals state
+  const [isManualJournalModalOpen, setIsManualJournalModalOpen] = useState(false);
+  const [isHistoricalImportModalOpen, setIsHistoricalImportModalOpen] = useState(false);
+
   useEffect(() => {
     if (initialSubView) {
       setSubView(initialSubView);
@@ -102,7 +130,7 @@ export function AccountingPage({
     }
   }, [initialSearchFilter]);
 
-  // Extract available years from real invoices or fallback to reference date
+  // Extract available years from real invoices and manual entries or fallback to reference date
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     const refYear = new Date(REFERENCE_DATE).getFullYear();
@@ -121,8 +149,14 @@ export function AccountingPage({
         if (!isNaN(y)) years.add(y);
       }
     }
+    for (const entry of manualEntries) {
+      if (entry.entryDate) {
+        const y = parseInt(entry.entryDate.slice(0, 4), 10);
+        if (!isNaN(y)) years.add(y);
+      }
+    }
     return Array.from(years).sort((a, b) => b - a);
-  }, [issuedInvoices, receivedInvoices]);
+  }, [issuedInvoices, receivedInvoices, manualEntries]);
 
   const [selectedYear, setSelectedYear] = useState<number>(() => availableYears[0] ?? 2026);
   const [selectedPeriod, setSelectedPeriod] = useState<PgcAccountingPeriod>('ALL');
@@ -132,13 +166,14 @@ export function AccountingPage({
     return generateAccountingSnapshot({
       issuedInvoices,
       receivedInvoices,
+      manualEntries,
       year: selectedYear,
       period: selectedPeriod,
       activityFilter,
       clients,
       suppliers,
     });
-  }, [issuedInvoices, receivedInvoices, selectedYear, selectedPeriod, activityFilter, clients, suppliers]);
+  }, [issuedInvoices, receivedInvoices, manualEntries, selectedYear, selectedPeriod, activityFilter, clients, suppliers]);
 
   // Generate full General Ledger (Libro Mayor)
   const generalLedger = useMemo(() => {
@@ -303,6 +338,31 @@ export function AccountingPage({
               onChange={setSubView}
               ariaLabel="Subvistas de contabilidad"
             />
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2">
+            {onCreateManualEntry && (
+              <button
+                type="button"
+                onClick={() => setIsManualJournalModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#0071E3] px-3.5 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#0077ED] transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Nuevo Asiento</span>
+              </button>
+            )}
+            {(onHistoricalImportIssued || onHistoricalImportReceived || onHistoricalImportManualEntries) && (
+              <button
+                type="button"
+                onClick={() => setIsHistoricalImportModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-black/[0.08] px-3.5 py-2 text-[13px] font-medium text-[#1D1D1F] shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:bg-black/[0.03] transition-colors"
+              >
+                <Upload className="h-4 w-4 text-[#0071E3]" />
+                <span className="hidden sm:inline">Importar Histórico (CSV)</span>
+                <span className="sm:hidden">Importar</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -993,9 +1053,36 @@ export function AccountingPage({
                       </span>
                       <span className="font-medium text-[#1D1D1F]">{entry.concept}</span>
                     </div>
-                    {entry.activity && (
-                      <span className="text-[12px] text-[#6E6E73]">{entry.activity}</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {entry.sourceType === 'manual' && (
+                        <span className="inline-flex items-center rounded-md bg-[#0071E3]/10 px-2 py-0.5 font-medium text-[11px] text-[#0071E3]">
+                          Manual
+                        </span>
+                      )}
+                      {entry.sourceType === 'imported' && (
+                        <span className="inline-flex items-center rounded-md bg-[#FFF8E6] px-2 py-0.5 font-medium text-[11px] text-[#B25E00]">
+                          Importado
+                        </span>
+                      )}
+                      {entry.activity && (
+                        <span className="text-[12px] text-[#6E6E73]">{entry.activity}</span>
+                      )}
+                      {(entry.isManual || entry.sourceType === 'manual' || entry.sourceType === 'imported') && onDeleteManualEntry && (
+                        <button
+                          type="button"
+                          title="Eliminar asiento manual"
+                          onClick={async () => {
+                            if (window.confirm(`¿Estás seguro de eliminar el asiento #${entry.entryNumber} (${entry.concept})?`)) {
+                              const cleanId = entry.id.startsWith('man-') ? entry.id.replace(/^man-/, '') : entry.id;
+                              await onDeleteManualEntry(cleanId);
+                            }
+                          }}
+                          className="ml-1 p-1 rounded-lg text-[#86868B] hover:text-[#D32F2F] hover:bg-[#FFF0F0] transition-colors"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="mt-3 overflow-x-auto">
@@ -1076,6 +1163,48 @@ export function AccountingPage({
             </article>
           ))}
         </div>
+      )}
+
+      {/* Manual Journal Entry Modal */}
+      {onCreateManualEntry && (
+        <ManualJournalModal
+          isOpen={isManualJournalModalOpen}
+          clients={clients || []}
+          suppliers={suppliers || []}
+          existingEntries={manualEntries}
+          onClose={() => setIsManualJournalModalOpen(false)}
+          onSave={async (entry) => {
+            await onCreateManualEntry(entry);
+          }}
+        />
+      )}
+
+      {/* Historical Import Modal */}
+      {(onHistoricalImportIssued || onHistoricalImportReceived || onHistoricalImportManualEntries) && (
+        <HistoricalImportModal
+          isOpen={isHistoricalImportModalOpen}
+          clients={clients || []}
+          suppliers={suppliers || []}
+          existingIssuedInvoices={issuedInvoices}
+          existingReceivedInvoices={receivedInvoices}
+          defaultActivity={activityFilter === 'Todas las actividades' ? 'Actividad Principal' : activityFilter}
+          onClose={() => setIsHistoricalImportModalOpen(false)}
+          onImportIssuedInvoices={async (invoices) => {
+            if (onHistoricalImportIssued) {
+              await onHistoricalImportIssued(invoices);
+            }
+          }}
+          onImportReceivedInvoices={async (invoices) => {
+            if (onHistoricalImportReceived) {
+              await onHistoricalImportReceived(invoices);
+            }
+          }}
+          onImportJournalEntries={async (entries) => {
+            if (onHistoricalImportManualEntries) {
+              await onHistoricalImportManualEntries(entries);
+            }
+          }}
+        />
       )}
     </div>
   );

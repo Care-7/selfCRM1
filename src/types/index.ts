@@ -46,6 +46,13 @@ export interface InvoiceLine {
   description: string;
   quantity: number;
   unitPrice: number;
+  concept?: string;
+  taxBase?: number;
+  ivaRate?: number;
+  ivaAmount?: number;
+  irpfRate?: number;
+  irpfAmount?: number;
+  total?: number;
 }
 
 export type DocumentType = 'normal' | 'rectificativa' | 'proforma' | 'albaran';
@@ -126,6 +133,8 @@ export interface ReceivedInvoice {
   notes?: string | null;
   lines?: any[];
   supplierSnapshot?: { name: string; tax_id: string };
+  isMigrated?: boolean;
+  totalAmount?: number;
 }
 
 export interface InvoiceTotals {
@@ -275,3 +284,38 @@ export interface OcrSampleInvoice {
   pgcAccountCode: string;
   pgcAccountName: string;
 }
+
+export interface ManualJournalLine {
+  accountCode: string;
+  accountName: string;
+  account_code?: string;
+  account_name?: string;
+  debit?: number;
+  credit?: number;
+  debe?: number;
+  haber?: number;
+  concept?: string;
+}
+
+export interface ManualJournalEntry {
+  id: string;
+  organizationId?: string;
+  activityId?: string;
+  activity?: string;
+  date?: string; // YYYY-MM-DD
+  entryDate?: string;
+  entryNumber?: string;
+  documentNumber?: string;
+  concept: string;
+  source?: 'manual' | 'imported';
+  sourceType?: 'manual' | 'imported';
+  lines: ManualJournalLine[];
+  totalDebit?: number;
+  totalCredit?: number;
+  totalDebe?: number;
+  totalHaber?: number;
+  isManual?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+

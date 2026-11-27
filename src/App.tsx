@@ -15,6 +15,8 @@ import type {
   ReceivedInvoiceStatus,
   TaxRegime,
   UserProfile,
+  ManualJournalEntry,
+  ManualJournalLine,
 } from './types';
 import {
   INITIAL_CLIENTS,
@@ -84,6 +86,15 @@ import {
   receivedInvoiceRowToReceivedInvoice,
   receivedInvoiceToCreateInput,
 } from './services/receivedInvoiceMappers';
+import {
+  fetchManualJournalEntries,
+  createManualJournalEntry,
+  deleteManualJournalEntry,
+  bulkImportManualJournalEntries,
+  manualJournalEntryRowToDomain,
+} from './services/manualJournalService';
+import type { CreateManualJournalEntryInput } from './types/database';
+import { supabase } from './lib/supabase';
 import { isValidUuid, normalizeTaxId } from './services/databaseErrors';
 
 function MainApp() {
@@ -113,6 +124,7 @@ function MainApp() {
   const [suppliers, setSuppliers] = useState<Contact[]>(() => (isDemo ? INITIAL_SUPPLIERS : []));
   const [issuedInvoices, setIssuedInvoices] = useState<IssuedInvoice[]>(() => (isDemo ? INITIAL_ISSUED_INVOICES : []));
   const [receivedInvoices, setReceivedInvoices] = useState<ReceivedInvoice[]>(() => (isDemo ? INITIAL_RECEIVED_INVOICES : []));
+  const [manualEntries, setManualEntries] = useState<ManualJournalEntry[]>([]);
 
   // Reset in-memory state on sign-out / session loss in live mode (only after initial auth loading completes)
   useEffect(() => {
@@ -121,6 +133,7 @@ function MainApp() {
       setSuppliers([]);
       setIssuedInvoices([]);
       setReceivedInvoices([]);
+      setManualEntries([]);
     }
   }, [isConfigured, loading, session]);
 
@@ -187,13 +200,15 @@ function MainApp() {
         listSuppliers(organization.id),
         listIssuedInvoices(organization.id),
         listReceivedInvoices(organization.id),
+        fetchManualJournalEntries(organization.id).catch(() => []),
       ])
-        .then(([clientsRows, suppliersRows, invoicesRows, receivedRows]) => {
+        .then(([clientsRows, suppliersRows, invoicesRows, receivedRows, manualRows]) => {
           if (!isMounted) return;
           setClients(clientsRows.map((r) => clientRowToContact(r, activities)));
           setSuppliers(suppliersRows.map((r) => supplierRowToContact(r, activities)));
           setIssuedInvoices(invoicesRows.map((r) => invoiceRowToIssuedInvoice(r, activities)));
           setReceivedInvoices(receivedRows.map((r) => receivedInvoiceRowToReceivedInvoice(r, activities)));
+          setManualEntries(manualRows);
         })
         .catch((err) => {
           console.error('Error al sincronizar datos desde Supabase:', err);
@@ -960,6 +975,173 @@ function MainApp() {
     showToast(`${newInvoices.length} facturas históricas importadas correctamente.`);
   };
 
+  const handleCreateManualEntry = async (entryInput: {
+    date: string;
+    documentNumber?: string;
+    concept: string;
+    activityId?: string;
+    lines: ManualJournalLine[];
+  }) => {
+    if (isConfigured && organization) {
+      const created = await createManualJournalEntry({
+        organization_id: organization.id,
+        activity_id: entryInput.activityId,
+        entry_date: entryInput.date,
+        document_number: entryInput.documentNumber || null,
+        concept: entryInput.concept,
+        source: 'manual',
+        lines: entryInput.lines.map((l) => ({
+          accountCode: l.accountCode || l.account_code || '',
+          accountName: l.accountName || l.account_name || '',
+          debit: l.debit ?? l.debe ?? 0,
+          credit: l.credit ?? l.haber ?? 0,
+          concept: l.concept,
+        })),
+      });
+      setManualEntries((prev) => [created, ...prev]);
+      showToast(`Asiento #${created.entryNumber || created.id} registrado en contabilidad.`);
+    } else {
+      const mockRow: ManualJournalEntry = {
+        id: `man-${Date.now()}`,
+        organizationId: 'demo-org',
+        entryNumber: String(manualEntries.length + 1),
+        entryDate: entryInput.date,
+        concept: entryInput.concept,
+        documentNumber: entryInput.documentNumber || undefined,
+        sourceType: 'manual',
+        isManual: true,
+        lines: entryInput.lines.map((l) => ({
+          accountCode: l.accountCode || l.account_code || '',
+          accountName: l.accountName || l.account_name || '',
+          concept: l.concept,
+          debe: l.debe ?? l.debit ?? 0,
+          haber: l.haber ?? l.credit ?? 0,
+          debit: l.debit ?? l.debe ?? 0,
+          credit: l.credit ?? l.haber ?? 0,
+        })),
+        totalDebe: entryInput.lines.reduce((s, l) => s + (l.debe ?? l.debit ?? 0), 0),
+        totalHaber: entryInput.lines.reduce((s, l) => s + (l.haber ?? l.credit ?? 0), 0),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      setManualEntries((prev) => [mockRow, ...prev]);
+      showToast(`Asiento #${mockRow.entryNumber} registrado en contabilidad.`);
+    }
+  };
+
+  const handleDeleteManualEntry = async (id: string) => {
+    if (isConfigured && organization) {
+      await deleteManualJournalEntry(id);
+      setManualEntries((prev) => prev.filter((m) => m.id !== id));
+      showToast('Asiento contable eliminado.');
+    } else {
+      setManualEntries((prev) => prev.filter((m) => m.id !== id));
+      showToast('Asiento contable eliminado.');
+    }
+  };
+
+  const handleHistoricalImportIssued = async (invoices: IssuedInvoice[]) => {
+    if (isConfigured && organization) {
+      for (const inv of invoices) {
+        try {
+          await (supabase.from('issued_invoices') as any).insert({
+            organization_id: organization.id,
+            series: inv.series || 'HIST',
+            sequence_number: inv.sequenceNumber || 1,
+            invoice_number: inv.number,
+            document_type: 'normal',
+            issuer_snapshot: createIssuerSnapshot(organization, userProfile as any),
+            client_snapshot: createClientSnapshot(
+              clients.find((c) => c.id === inv.clientId) || ({
+                id: inv.clientId,
+                name: inv.clientName,
+                tax_id: inv.clientNif,
+                address: '',
+                email: '',
+              } as any)
+            ),
+            lines: convertInvoiceLinesToDbItems(inv.lines, inv.ivaRate || 21, inv.irpfRate || 0),
+            tax_base: inv.taxBase ?? inv.lines.reduce((s, l) => s + (l.taxBase || 0), 0),
+            vat_total: inv.vatTotal ?? inv.lines.reduce((s, l) => s + (l.ivaAmount || 0), 0),
+            irpf_total: inv.irpfTotal ?? inv.lines.reduce((s, l) => s + (l.irpfAmount || 0), 0),
+            total_amount: inv.totalAmount ?? inv.lines.reduce((s, l) => s + (l.total || 0), 0),
+            issue_date: inv.issueDate,
+            due_date: inv.dueDate,
+            payment_status: 'paid',
+            is_migrated: true,
+            verifactu_locked: true,
+            verifactu_hash: inv.veriFactuHash || `HIST-${inv.number}`,
+            verifactu_status: 'accepted',
+          });
+        } catch (err: any) {
+          console.warn(`Error al insertar factura histórica ${inv.number}:`, err);
+        }
+      }
+      const fresh = await listIssuedInvoices(organization.id);
+      setIssuedInvoices(fresh.map((r) => invoiceRowToIssuedInvoice(r, activities)));
+      showToast(`Se han importado ${invoices.length} facturas emitidas históricas.`);
+    } else {
+      setIssuedInvoices((prev) => [...invoices, ...prev]);
+      showToast(`Se han importado ${invoices.length} facturas emitidas históricas.`);
+    }
+  };
+
+  const handleHistoricalImportReceived = async (invoices: ReceivedInvoice[]) => {
+    if (isConfigured && organization) {
+      for (const rec of invoices) {
+        try {
+          await createReceivedInvoice(receivedInvoiceToCreateInput(rec, organization.id));
+        } catch (err: any) {
+          console.warn(`Error al insertar gasto histórico ${rec.number}:`, err);
+        }
+      }
+      const fresh = await listReceivedInvoices(organization.id);
+      setReceivedInvoices(fresh.map((r) => receivedInvoiceRowToReceivedInvoice(r, activities)));
+      showToast(`Se han importado ${invoices.length} facturas recibidas históricas.`);
+    } else {
+      setReceivedInvoices((prev) => [...invoices, ...prev]);
+      showToast(`Se han importado ${invoices.length} facturas recibidas históricas.`);
+    }
+  };
+
+  const handleHistoricalImportManualEntries = async (entries: CreateManualJournalEntryInput[]) => {
+    if (isConfigured && organization) {
+      await bulkImportManualJournalEntries(
+        organization.id,
+        entries.map((e) => ({ ...e, organization_id: organization.id }))
+      );
+      const fresh = await fetchManualJournalEntries(organization.id);
+      setManualEntries(fresh);
+      showToast(`Se han importado ${entries.length} asientos contables históricos.`);
+    } else {
+      const mockEntries: ManualJournalEntry[] = entries.map((e, idx) => ({
+        id: `man-mig-${Date.now()}-${idx}`,
+        organizationId: 'demo-org',
+        entryNumber: e.entry_number || String(manualEntries.length + idx + 1),
+        entryDate: e.entry_date,
+        concept: e.concept,
+        documentNumber: e.document_number || undefined,
+        sourceType: 'imported',
+        isManual: true,
+        lines: e.lines.map((l) => ({
+          accountCode: l.accountCode || l.account_code || '',
+          accountName: l.accountName || l.account_name || '',
+          concept: l.concept,
+          debe: l.debe ?? l.debit ?? 0,
+          haber: l.haber ?? l.credit ?? 0,
+          debit: l.debit ?? l.debe ?? 0,
+          credit: l.credit ?? l.haber ?? 0,
+        })),
+        totalDebe: e.lines.reduce((s, l) => s + (l.debe ?? l.debit ?? 0), 0),
+        totalHaber: e.lines.reduce((s, l) => s + (l.haber ?? l.credit ?? 0), 0),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+      setManualEntries((prev) => [...mockEntries, ...prev]);
+      showToast(`Se han importado ${entries.length} asientos contables históricos.`);
+    }
+  };
+
   const handleSaveProfile = (next: UserProfile) => {
     setUserProfile(next);
     setTaxRegime(next.regime);
@@ -1126,9 +1308,15 @@ function MainApp() {
               activityFilter={activityFilter}
               clients={clients}
               suppliers={suppliers}
+              manualEntries={manualEntries}
               initialSubView={accountingNav.subView}
               initialAccountFilter={accountingNav.accountFilter}
               initialSearchFilter={accountingNav.searchFilter}
+              onCreateManualEntry={handleCreateManualEntry}
+              onDeleteManualEntry={handleDeleteManualEntry}
+              onHistoricalImportIssued={handleHistoricalImportIssued}
+              onHistoricalImportReceived={handleHistoricalImportReceived}
+              onHistoricalImportManualEntries={handleHistoricalImportManualEntries}
             />
           )}
 
@@ -1181,6 +1369,7 @@ function MainApp() {
         isOpen={expenseModal.open}
         expense={expenseModal.expense}
         suppliers={suppliers}
+        allReceivedInvoices={receivedInvoices}
         activities={activities}
         defaultActivity={defaultActivity}
         onClose={() => setExpenseModal({ open: false, expense: null })}

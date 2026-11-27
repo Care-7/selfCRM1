@@ -397,6 +397,7 @@ test('subaccount assignment uses contact account_code in journal entries for emi
       defaultIva: 21,
       defaultIrpf: 0,
       status: 'Activo',
+      historicalVolume: 0,
       kind: 'cliente',
     },
   ];
@@ -413,6 +414,7 @@ test('subaccount assignment uses contact account_code in journal entries for emi
       defaultIva: 21,
       defaultIrpf: 0,
       status: 'Activo',
+      historicalVolume: 0,
       kind: 'proveedor',
     },
   ];
@@ -452,6 +454,7 @@ test('subaccount assignment uses contact account_code in journal entries for emi
       accountingDate: '2026-03-05',
       concept: 'Servicios de asesoría',
       pgcAccountCode: '623',
+      pgcAccountName: 'Servicios de profesionales independientes',
       baseAmount: 500,
       ivaRate: 21,
       paymentStatus: 'paid',
@@ -506,6 +509,7 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       defaultIva: 21,
       defaultIrpf: 0,
       status: 'Activo',
+      historicalVolume: 0,
       kind: 'cliente',
     },
     {
@@ -519,6 +523,7 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       defaultIva: 21,
       defaultIrpf: 0,
       status: 'Activo',
+      historicalVolume: 0,
       kind: 'cliente',
     },
   ];
@@ -535,6 +540,7 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       defaultIva: 21,
       defaultIrpf: 0,
       status: 'Activo',
+      historicalVolume: 0,
       kind: 'proveedor',
     },
   ];
@@ -547,10 +553,13 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       documentType: 'normal',
       clientId: 'c1',
       clientName: 'Cliente Alpha',
+      clientNif: 'A11111111',
       activity: 'General',
       issueDate: '2026-04-10',
       dueDate: '',
       lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
       taxBase: 2000,
       vatTotal: 420,
       totalAmount: 2420,
@@ -564,10 +573,13 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       documentType: 'normal',
       clientId: 'c2',
       clientName: 'Cliente Beta',
+      clientNif: 'B22222222',
       activity: 'General',
       issueDate: '2026-04-15',
       dueDate: '',
       lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
       taxBase: 1000,
       vatTotal: 210,
       totalAmount: 1210,
@@ -582,11 +594,13 @@ test('Balance Sheet properly groups multiple 430* and 410* subaccounts and keeps
       number: 'EXP-1',
       supplierId: 's1',
       supplierName: 'Proveedor Gamma',
+      supplierNif: 'G33333333',
       activity: 'General',
       issueDate: '2026-04-20',
       accountingDate: '2026-04-20',
       concept: 'Mantenimiento',
       pgcAccountCode: '622',
+      pgcAccountName: 'Reparaciones y conservación',
       baseAmount: 600,
       ivaRate: 21,
       paymentStatus: 'pending', // unpaid -> saldo acreedor in 4100005
@@ -637,10 +651,13 @@ test('generateGeneralLedger calculates accurate chronological running balances a
       documentType: 'normal',
       clientId: 'c1',
       clientName: 'Cliente 1',
+      clientNif: 'A11111111',
       activity: 'General',
       issueDate: '2026-01-10',
       dueDate: '',
       lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
       taxBase: 1000,
       vatTotal: 210,
       totalAmount: 1210,
@@ -654,10 +671,13 @@ test('generateGeneralLedger calculates accurate chronological running balances a
       documentType: 'normal',
       clientId: 'c1',
       clientName: 'Cliente 1',
+      clientNif: 'A11111111',
       activity: 'General',
       issueDate: '2026-02-15',
       dueDate: '',
       lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
       taxBase: 500,
       vatTotal: 105,
       totalAmount: 605,
@@ -710,10 +730,13 @@ test('exportGeneralLedgerCsv outputs official UTF-8 BOM CSV with semicolons and 
       documentType: 'normal',
       clientId: 'c1',
       clientName: 'Cliente CSV',
+      clientNif: 'A11111111',
       activity: 'General',
       issueDate: '2026-05-20',
       dueDate: '',
       lines: [],
+      ivaRate: 21,
+      irpfRate: 0,
       taxBase: 100,
       vatTotal: 21,
       totalAmount: 121,
@@ -735,4 +758,92 @@ test('exportGeneralLedgerCsv outputs official UTF-8 BOM CSV with semicolons and 
   assert.ok(csv.includes('Cuenta;Descripcion_Cuenta;Fecha;Asiento;Documento;Concepto;Debe;Haber;Saldo;D_H'));
   assert.ok(csv.includes('430;Clientes;20/05/2026;1;FAC-CSV;Emisión Factura FAC-CSV;121,00;0,00;121,00;D'));
 });
+
+test('manual journal entries integrate into snapshot, mayor and maintain double entry balance', () => {
+  const manualEntries = [
+    {
+      id: 'man-1',
+      organizationId: 'org-1',
+      entryNumber: 'MAN-001',
+      entryDate: '2026-01-02',
+      concept: 'Constitución y aportación inicial capital',
+      documentNumber: 'ESCRITURA-1',
+      sourceType: 'manual' as const,
+      isManual: true,
+      lines: [
+        { accountCode: '572', accountName: 'Bancos', debe: 10000, haber: 0 },
+        { accountCode: '100', accountName: 'Capital Social', debe: 0, haber: 10000 },
+      ],
+      totalDebe: 10000,
+      totalHaber: 10000,
+      createdAt: '2026-01-02T10:00:00Z',
+      updatedAt: '2026-01-02T10:00:00Z',
+    },
+    {
+      id: 'man-2',
+      organizationId: 'org-1',
+      entryNumber: 'MAN-002',
+      entryDate: '2026-01-10',
+      concept: 'Adquisición de equipamiento informático',
+      documentNumber: 'FACT-PC',
+      sourceType: 'manual' as const,
+      isManual: true,
+      lines: [
+        { accountCode: '217', accountName: 'Equipos para procesos de información', debe: 2500, haber: 0 },
+        { accountCode: '572', accountName: 'Bancos', debe: 0, haber: 2500 },
+      ],
+      totalDebe: 2500,
+      totalHaber: 2500,
+      createdAt: '2026-01-10T10:00:00Z',
+      updatedAt: '2026-01-10T10:00:00Z',
+    },
+  ];
+
+  const snapshot = generateAccountingSnapshot({
+    issuedInvoices: [],
+    receivedInvoices: [],
+    manualEntries,
+    year: 2026,
+  });
+
+  // Verify journal entries contains manual entries
+  assert.equal(snapshot.journalEntries.length, 2);
+  assert.equal(snapshot.journalEntries[0].concept, 'Constitución y aportación inicial capital');
+  assert.equal(snapshot.journalEntries[0].isManual, true);
+  assert.equal(snapshot.journalEntries[0].sourceType, 'manual');
+
+  // Verify trial balance contains accounts 100, 217, 572
+  const tb100 = snapshot.trialBalance.rows.find((r) => r.accountCode === '100');
+  const tb217 = snapshot.trialBalance.rows.find((r) => r.accountCode === '217');
+  const tb572 = snapshot.trialBalance.rows.find((r) => r.accountCode === '572');
+
+  assert.ok(tb100, 'Trial balance must include account 100');
+  assert.equal(tb100?.creditBalance, 10000);
+
+  assert.ok(tb217, 'Trial balance must include account 217');
+  assert.equal(tb217?.debitBalance, 2500);
+
+  assert.ok(tb572, 'Trial balance must include account 572');
+  assert.equal(tb572?.sumDebit, 10000);
+  assert.equal(tb572?.sumCredit, 2500);
+  assert.equal(tb572?.debitBalance, 7500);
+
+  // Verify Balance Sheet: Activo (2500 Inmovilizado + 7500 Tesorería) = 10000 === Patrimonio Neto (10000 Capital)
+  assert.equal(snapshot.balanceSheet.totalActivo, 10000);
+  assert.equal(snapshot.balanceSheet.totalPasivoYPatrimonio, 10000);
+  assert.equal(snapshot.balanceSheet.isBalanced, true);
+
+  // Verify General Ledger
+  const ledger = generateGeneralLedger(snapshot);
+  const account217 = ledger.accountMap['217'];
+  assert.ok(account217);
+  assert.equal(account217.closingBalance, 2500);
+  assert.equal(account217.closingBalanceType, 'D');
+
+  const account572 = ledger.accountMap['572'];
+  assert.ok(account572);
+  assert.equal(account572.closingBalance, 7500);
+  assert.equal(account572.closingBalanceType, 'D');
+});
+
 
